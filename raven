@@ -277,7 +277,7 @@ pkginstall() {
         exit "$EXIT_FAILURE"
     }
 
-    for var in NAME VERSION FILES MD5SUMS; do
+    for var in NAME VERSION FILES SHA256SUMS; do
         [[ -z "${!var}" ]] && {
             echo "ERROR: Missing package $var" >&2
             exit "$EXIT_FAILURE"
@@ -338,7 +338,7 @@ pkginstall() {
     echo "Checking dependencies..."
     local -a deps_failed=()
     for dep in "${DEPENDS[@]}"; do
-        local operator=""
+        local operation=""
         case "$dep" in
             *=*) operator="=" ;;
             *"<="*) operator="<=" ;;
@@ -384,8 +384,8 @@ pkginstall() {
     chmod 700 "$src_dir"
     cd "$src_dir" || exit "$EXIT_FAILURE"
 
-    if [[ "${#FILES[@]}" -ne "${#MD5SUMS[@]}" ]]; then
-        echo "ERROR: Mismatch between files and MD5 checksums" >&2
+    if [[ "${#FILES[@]}" -ne "${#SHA256SUMS[@]}" ]]; then
+        echo "ERROR: Mismatch between files and SHA256 checksums" >&2
         exit "$EXIT_FAILURE"
     fi
 
@@ -399,10 +399,10 @@ pkginstall() {
         }
         cp "$current_dir/$file" "$src_dir" || exit "$EXIT_FAILURE"
 
-        local md5
-        md5=$(md5sum "$file" | awk '{print $1}')
-        [[ "${MD5SUMS[$i]}" != "skip" && "${MD5SUMS[$i]}" != "$md5" ]] && {
-            echo "ERROR: MD5 checksum mismatch for $file" >&2
+        local sha256
+        sha256=$(sha256sum "$file" | awk '{print $1}')
+        [[ "${SHA256SUMS[$i]}" != "skip" && "${SHA256SUMS[$i]}" != "$sha256" ]] && {
+            echo "ERROR: SHA256 checksum mismatch for $file" >&2
             exit "$EXIT_FAILURE"
         }
     done

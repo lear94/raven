@@ -105,7 +105,7 @@ make install
 NAME=''
 VERSION=1.0
 FILES=('')
-MD5SUMS=('')
+SHA256SUMS=('')
 DEPENDS=('')
 LICENSE=''
 

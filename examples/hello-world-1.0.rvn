@@ -1,0 +1,33 @@
+#!/bin/bash
+
+NAME='hello-world'
+VERSION='1.0'
+FILES=('hello.c')
+SHA256SUMS=('ad019360cf974ee09fefe67c1df762f30a2fdca0b158c2f52efc39bced4055aa')
+DEPENDS=('')
+LICENSE='GPLv2'
+
+PREPARE()
+{
+    echo "Preparing $NAME-$VERSION..."
+    mkdir -p build
+}
+
+BUILD()
+{
+    echo "Building $NAME-$VERSION..."
+    gcc -o build/hello hello.c || return 1
+}
+
+CHECK()
+{
+    echo "Checking $NAME-$VERSION..."
+    [[ -f build/hello ]] || return 1
+    ./build/hello | grep -q "Hello, World!" || return 1
+}
+
+MERGE()
+{
+    echo "Installing $NAME-$VERSION..."
+    install -m 755 build/hello /usr/local/bin/hello || return 1
+}

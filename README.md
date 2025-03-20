@@ -129,3 +129,41 @@ MERGE()
   :
 }
 ```
+
+**Example package (hello-world-1.0.rvn):**
+
+```bash
+#!/bin/bash
+
+NAME='hello-world'
+VERSION='1.0'
+FILES=('hello.c')
+SHA256SUMS=('dffd6021bb2e2aa0918f47a6ef9f4e0b8d9e6c2e5f69d1f3f8f566e395b0c084')
+DEPENDS=('gcc')
+LICENSE='GPLv2'
+
+PREPARE()
+{
+    echo "Preparing $NAME-$VERSION..."
+    mkdir -p build
+}
+
+BUILD()
+{
+    echo "Building $NAME-$VERSION..."
+    gcc -o build/hello hello.c || return 1
+}
+
+CHECK()
+{
+    echo "Checking $NAME-$VERSION..."
+    [[ -f build/hello ]] || return 1
+    ./build/hello | grep -q "Hello, World!" || return 1
+}
+
+MERGE()
+{
+    echo "Installing $NAME-$VERSION..."
+    install -m 755 build/hello /usr/local/bin/hello || return 1
+}
+```

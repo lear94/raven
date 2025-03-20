@@ -1,0 +1,526 @@
+#!/bin/bash
+
+# Raven - Simple Package Manager for GNU/Linux
+# Author: Pablo Gonzalez <hello@jezrael.com>
+# License: GPLv2
+
+readonly RAVEN_NAME="raven"
+readonly RAVEN_VERSION="1.0"
+readonly RAVEN_CONF="/etc/raven.conf"
+
+# Exit codes
+readonly EXIT_SUCCESS=0
+readonly EXIT_FAILURE=1
+
+# Check configuration file existence
+if [[ ! -f "$RAVEN_CONF" ]]; then
+    echo "ERROR: Cannot find configuration file: $RAVEN_CONF"
+    exit "$EXIT_FAILURE"
+fi
+
+# Source configuration
+source "$RAVEN_CONF"
+
+# Check if running as root
+check_user() {
+    if [[ "$UID" -ne 0 ]]; then
+        echo "ERROR: This operation requires root privileges"
+        exit "$EXIT_FAILURE"
+    fi
+}
+
+# Lock management functions
+lock() {
+    touch "$LOCK_FILE" 2>/dev/null || {
+        echo "ERROR: Cannot create lock file"
+        exit "$EXIT_FAILURE"
+    }
+}
+
+is_locked() {
+    [[ -f "$LOCK_FILE" ]]
+}
+
+unlock() {
+    [[ -f "$LOCK_FILE" ]] && rm -f "$LOCK_FILE"
+}
+
+# Utility functions
+function_exists() {
+    [[ "$(type -t "$1" 2>/dev/null)" == "function" ]]
+}
+
+contains() {
+    local -a list=("${@:1:$#-1}")
+    local item="${*: -1}"
+    for element in "${list[@]}"; do
+        [[ "$element" == "$item" ]] && return 0
+    done
+    return 1
+}
+
+confirmation() {
+    read -p "Do you want to continue? [Y/n] " -r
+    echo
+    [[ ! "$REPLY" =~ ^[Yy]$ ]] && {
+        echo "ERROR: Operation aborted"
+        exit "$EXIT_FAILURE"
+    }
+}
+
+pause_key() {
+    read -n 1 -s -p "$1"
+}
+
+# Filesystem tree generation
+tree_root() {
+    shopt -s nullglob dotglob
+    find / -type f -not \( \
+        -wholename "/mnt/*" -o \
+        -wholename "/home/*" -o \
+        -wholename "/sys/*" -o \
+        -wholename "/proc/*" -o \
+        -wholename "/dev/*" -o \
+        -wholename "/media/*" -o \
+        -wholename "/tmp/*" -o \
+        -wholename "/run/*" -o \
+        -wholename "/root/*" -o \
+        -wholename "/tools/*" -o \
+        -wholename "/source/*" \
+    \)
+}
+
+# Version comparison functions
+version_eq() { [[ "$1" == "$2" ]]; }
+version_gt() { [[ "$1" == "$2" ]] && return 1; [[ "$2" == "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" ]]; }
+version_lt() { [[ "$1" == "$2" ]] && return 1; [[ "$2" == "$(printf '%s\n' "$1" "$2" | sort -rV | head -n1)" ]]; }
+version_le() { version_eq "$1" "$2" || version_lt "$1" "$2"; }
+version_ge() { version_eq "$1" "$2" || version_gt "$1" "$2"; }
+
+# Package management functions
+UD_conflicts() {
+    local pkg="$1"
+    local pkg_name="${pkg%%-*}"
+    local pkg_version="${pkg#*-}"
+    local deps_conflicts=""
+    local -a meta_files=("$PACKAGES_DIR"/*.meta)
+
+    [[ ! -e "${meta_files[0]}" ]] && return 0
+
+    for meta in "${meta_files[@]}"; do
+        unset NAME VERSION DEPENDS
+        source "$meta"
+        for dep in "${DEPENDS[@]}"; do
+            local operator=""
+            case "$dep" in
+                *=*) operator="version_eq" ;;
+                *">="*) operator="version_ge" ;;
+                *">"*) operator="version_gt" ;;
+                *"<="*) operator="version_le" ;;
+                *"<"*) operator="version_lt" ;;
+            esac
+
+            [[ -z "$operator" ]] && continue
+
+            local delimiter="${operator#version_}"
+            delimiter="${delimiter:0:1}"
+            IFS="$delimiter" read -r dep_name dep_version <<< "$dep"
+
+            if [[ "$pkg_name" == "$dep_name" ]]; then
+                if ! "$operator" "$dep_version" "$pkg_version"; then
+                    deps_conflicts+="${NAME}-${VERSION};"
+                fi
+            fi
+        done
+    done
+
+    echo "${deps_conflicts%;}"
+}
+
+pkglist() {
+    local -a meta_files=("$PACKAGES_DIR"/*.meta)
+    if [[ ! -e "${meta_files[0]}" ]]; then
+        echo "ERROR: No packages found in $PACKAGES_DIR"
+        exit "$EXIT_FAILURE"
+    fi
+
+    echo "Installed packages: ${#meta_files[@]}"
+    for meta in "${meta_files[@]}"; do
+        basename "$meta" .meta | sed "s|$PACKAGES_DIR/||"
+    done
+}
+
+pkginfo() {
+    local pkg="$1"
+    local meta_file="$PACKAGES_DIR/$pkg.meta"
+    [[ ! -f "$meta_file" ]] && {
+        echo "ERROR: Target not found: $pkg"
+        exit "$EXIT_FAILURE"
+    }
+
+    source "$meta_file"
+    echo "Package: $NAME-$VERSION"
+    if [[ -n "${DEPENDS[*]}" ]]; then
+        echo "Dependencies: ${DEPENDS[*]}"
+    fi
+    [[ -n "$LICENSE" ]] && echo "License: $LICENSE"
+    echo "Installation date: $DATE"
+}
+
+pkgremove() {
+    local pkg="$1"
+    local meta_file="$PACKAGES_DIR/$pkg.meta"
+    [[ ! -f "$meta_file" ]] && {
+        echo "ERROR: Target not found: $pkg"
+        exit "$EXIT_FAILURE"
+    }
+
+    local -a deps_failed=()
+    local -a meta_files=("$PACKAGES_DIR"/*.meta)
+    for meta in "${meta_files[@]}"; do
+        unset NAME VERSION DEPENDS
+        source "$meta"
+        for dep in "${DEPENDS[@]}"; do
+            dep="${dep//=/-}"
+            [[ "$dep" == "$pkg" ]] && deps_failed+=("$NAME-$VERSION")
+        done
+    done
+
+    if [[ "${#deps_failed[@]}" -gt 0 ]]; then
+        echo "ERROR: Cannot remove $pkg due to dependencies:"
+        printf '%s\n' "${deps_failed[@]}"
+        exit "$EXIT_FAILURE"
+    fi
+
+    source "$meta_file"
+    echo "The package $NAME-$VERSION will be uninstalled"
+    confirmation
+
+    local failures=0
+    local root="/"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        rm "$root/$line" 2>/dev/null || ((failures++))
+    done < "$PACKAGES_DIR/$pkg.tree"
+
+    rm "$meta_file" 2>/dev/null || ((failures++))
+    rm "$PACKAGES_DIR/$pkg.tree" 2>/dev/null || ((failures++))
+
+    if [[ "$failures" -eq 0 ]]; then
+        echo "Package $pkg uninstalled successfully"
+    else
+        echo "ERROR: Some files from $pkg could not be removed"
+    fi
+}
+
+pkginstall() {
+    local pkg="$1"
+    local upgrade="no" downgrade="no"
+    [[ ! -f "$pkg" ]] && {
+        echo "ERROR: Cannot find package file: $pkg"
+        exit "$EXIT_FAILURE"
+    }
+
+    source "$pkg"
+    for var in NAME VERSION FILES MD5SUMS; do
+        [[ -z "${!var}" ]] && {
+            echo "ERROR: Missing package $var"
+            exit "$EXIT_FAILURE"
+        }
+    done
+
+    for func in PREPARE BUILD CHECK MERGE; do
+        function_exists "$func" || {
+            echo "ERROR: Missing $func function in package"
+            exit "$EXIT_FAILURE"
+        }
+    done
+
+    # Handle existing package
+    local installed_version=""
+    if compgen -G "$PACKAGES_DIR/$NAME-*.meta" > /dev/null; then
+        installed_version=$(basename "$(ls "$PACKAGES_DIR/$NAME-"*.meta)" .meta | sed "s|$PACKAGES_DIR/$NAME-||")
+
+        if [[ "$VERSION" == "$installed_version" ]]; then
+            if [[ "$REINSTALL" == "yes" ]]; then
+                echo "The package $NAME-$VERSION will be reinstalled"
+                confirmation
+            else
+                echo "ERROR: Package $NAME-$VERSION is already installed"
+                exit "$EXIT_FAILURE"
+            fi
+        elif version_gt "$VERSION" "$installed_version"; then
+            echo "Upgrading package:"
+            echo "Installed: $NAME-$installed_version"
+            echo "New: $NAME-$VERSION"
+            confirmation
+            local conflicts
+            conflicts=$(UD_conflicts "$NAME-$VERSION")
+            if [[ -n "$conflicts" ]]; then
+                echo "ERROR: Cannot upgrade due to conflicts:"
+                echo "$conflicts" | tr ';' '\n'
+                exit "$EXIT_FAILURE"
+            fi
+            upgrade="yes"
+        elif version_lt "$VERSION" "$installed_version"; then
+            echo "Downgrading package:"
+            echo "Installed: $NAME-$installed_version"
+            echo "New: $NAME-$VERSION"
+            confirmation
+            local conflicts
+            conflicts=$(UD_conflicts "$NAME-$VERSION")
+            if [[ -n "$conflicts" ]]; then
+                echo "ERROR: Cannot downgrade due to conflicts:"
+                echo "$conflicts" | tr ';' '\n'
+                exit "$EXIT_FAILURE"
+            fi
+            downgrade="yes"
+        fi
+    else
+        echo "Installing package $NAME-$VERSION"
+        confirmation
+    fi
+
+    # Verify dependencies
+    echo "Checking dependencies..."
+    local -a deps_failed=()
+    for dep in "${DEPENDS[@]}"; do
+        local operator=""
+        case "$dep" in
+            *=*) operator="=" ;;
+            *"<="*) operator="<=" ;;
+            *"<"*) operator="<" ;;
+            *">="*) operator=">=" ;;
+            *">"*) operator=">" ;;
+            *) echo "ERROR: Invalid dependency syntax: $dep"; exit "$EXIT_FAILURE" ;;
+        esac
+
+        IFS="$operator" read -r dep_name dep_version <<< "$dep"
+        local installed_dep
+        installed_dep=$(compgen -G "$PACKAGES_DIR/$dep_name-*.meta" | head -n1)
+
+        if [[ -z "$installed_dep" ]]; then
+            deps_failed+=("$dep")
+            continue
+        fi
+
+        local installed_ver
+        installed_ver=$(basename "$installed_dep" .meta | sed "s|$PACKAGES_DIR/$dep_name-||")
+
+        case "$operator" in
+            "=") version_eq "$installed_ver" "$dep_version" || deps_failed+=("$dep") ;;
+            ">") version_gt "$installed_ver" "$dep_version" || deps_failed+=("$dep") ;;
+            ">=") version_ge "$installed_ver" "$dep_version" || deps_failed+=("$dep") ;;
+            "<") version_lt "$installed_ver" "$dep_version" || deps_failed+=("$dep") ;;
+            "<=") version_le "$installed_ver" "$dep_version" || deps_failed+=("$dep") ;;
+        esac
+    done
+
+    if [[ "${#deps_failed[@]}" -gt 0 ]]; then
+        echo "ERROR: Missing or incompatible dependencies:"
+        printf '%s\n' "${deps_failed[@]}"
+        exit "$EXIT_FAILURE"
+    fi
+
+    # Setup build directory
+    local src_dir="$BUILD_DIR/$NAME-$VERSION"
+    [[ -d "$src_dir" ]] && rm -rf "$src_dir"
+    mkdir -p "$src_dir" || {
+        echo "ERROR: Cannot create build directory"
+        exit "$EXIT_FAILURE"
+    }
+    cd "$src_dir" || exit "$EXIT_FAILURE"
+
+    # Verify files and checksums
+    if [[ "${#FILES[@]}" -ne "${#MD5SUMS[@]}" ]]; then
+        echo "ERROR: Mismatch between files and MD5 checksums"
+        exit "$EXIT_FAILURE"
+    fi
+
+    local current_dir
+    current_dir=$(pwd)
+    for i in "${!FILES[@]}"; do
+        local file="${FILES[$i]}"
+        [[ ! -f "$current_dir/$file" ]] && {
+            echo "ERROR: Cannot find file: $current_dir/$file"
+            exit "$EXIT_FAILURE"
+        }
+        cp "$current_dir/$file" "$src_dir" || exit "$EXIT_FAILURE"
+
+        local md5
+        md5=$(md5sum "$file" | awk '{print $1}')
+        [[ "${MD5SUMS[$i]}" != "skip" && "${MD5SUMS[$i]}" != "$md5" ]] && {
+            echo "ERROR: MD5 checksum mismatch for $file"
+            exit "$EXIT_FAILURE"
+        }
+    done
+
+    # Build process
+    local failed="no"
+    echo "Running BEFORE action..."
+    tree_root > "$src_dir/.BEFORE" 2>/dev/null
+
+    for step in "Configuring:PREPARE" "Compiling:BUILD" "Installing:MERGE"; do
+        IFS=":" read -r message function <<< "$step"
+        echo "$message $NAME-$VERSION..."
+
+        if [[ "$QUIET" == "yes" ]]; then
+            "$function" > /dev/null 2>&1 || failed="yes"
+        else
+            "$function" || failed="yes"
+        fi
+
+        if [[ "$failed" == "yes" && "$IGNORE" == "no" ]]; then
+            echo "ERROR: $message failed for $NAME-$VERSION"
+            confirmation
+        elif [[ "$QUIET" == "no" ]]; then
+            pause_key "$message finished, press any key to continue..."
+            echo
+        fi
+
+        [[ "$function" == "BUILD" && "$CHECK" == "yes" ]] && {
+            echo "Running tests..."
+            if [[ "$QUIET" == "yes" ]]; then
+                CHECK > /dev/null 2>&1 || failed="yes"
+            else
+                CHECK || failed="yes"
+            fi
+
+            if [[ "$failed" == "yes" && "$IGNORE" == "no" ]]; then
+                echo "ERROR: Tests failed for $NAME-$VERSION"
+                confirmation
+            elif [[ "$QUIET" == "no" ]]; then
+                pause_key "Tests finished, press any key to continue..."
+                echo
+            fi
+        }
+    done
+
+    # Generate file tree and handle upgrade/downgrade
+    echo "Running AFTER action..."
+    tree_root > "$src_dir/.AFTER" 2>/dev/null
+    diff -u "$src_dir/.BEFORE" "$src_dir/.AFTER" | grep '^+' | cut -c2- > "$src_dir/$NAME-$VERSION.tree"
+
+    if [[ ! -s "$src_dir/$NAME-$VERSION.tree" ]]; then
+        if [[ "$REINSTALL" == "yes" ]]; then
+            echo "Package $NAME-$VERSION reinstalled successfully"
+            exit "$EXIT_SUCCESS"
+        fi
+        echo "ERROR: Package contains no files"
+        exit "$EXIT_FAILURE"
+    fi
+
+    if [[ "$upgrade" == "yes" || "$downgrade" == "yes" ]]; then
+        local old_tree="$PACKAGES_DIR/$NAME-$installed_version.tree"
+        local new_tree="$src_dir/$NAME-$VERSION.tree"
+        local temp_file="$src_dir/.TEMP"
+
+        if [[ "$upgrade" == "yes" ]]; then
+            diff -u "$old_tree" "$new_tree" | tail -n+4 | grep '^-' | cut -c2- > "$temp_file"
+        else
+            diff -u "$new_tree" "$old_tree" | tail -n+4 | grep '^+' | cut -c2- > "$temp_file"
+        fi
+
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            rm -f "/$line" 2>/dev/null
+        done < "$temp_file"
+
+        rm -f "$PACKAGES_DIR/$NAME-$installed_version."{meta,tree}
+    fi
+
+    # Create meta file
+    local install_date
+    install_date=$(date '+%m/%d/%Y-%H:%M:%S')
+    {
+        echo '#!/bin/bash'
+        echo
+        echo "NAME='$NAME'"
+        echo "VERSION='$VERSION'"
+        echo "LICENSE='$LICENSE'"
+        echo "DATE='$install_date'"
+        echo "DEPENDS=(${DEPENDS[*]@Q})"
+    } > "$src_dir/$NAME-$VERSION.meta"
+
+    # Move files to package directory
+    mv "$src_dir/$NAME-$VERSION."{meta,tree} "$PACKAGES_DIR/"
+    rm -f "$src_dir/. "{BEFORE,AFTER}
+
+    # Cleanup and final message
+    [[ "$CLEAN" == "yes" ]] && {
+        echo "Cleaning..."
+        rm -rf "$src_dir"
+    }
+
+    case "$upgrade,$downgrade" in
+        "yes,no") echo "$NAME has been upgraded successfully" ;;
+        "no,yes") echo "$NAME has been downgraded successfully" ;;
+        *) echo "$NAME has been installed successfully" ;;
+    esac
+}
+
+# Help and version display
+show_help() {
+    cat << EOF
+Usage: $RAVEN_NAME [options] command
+
+$RAVEN_NAME is a simple package manager for GNU/Linux
+
+Commands:
+  -I, --install <pkg>    Install a package
+  -R, --remove <pkg>     Remove a package
+  -S, --show <pkg>       Show package info
+  -L, --list            List installed packages
+  -H, --help            Show this help
+  -V, --version         Show $RAVEN_NAME version
+
+Options:
+  -q, --quiet           Suppress compile output
+  -c, --check           Run tests after build
+  -n, --clean           Clean after install
+  -e, --reinstall       Reinstall a package
+  -g, --ignore          Ignore build failures
+EOF
+}
+
+show_version() {
+    echo "$RAVEN_NAME-$RAVEN_VERSION"
+}
+
+# Main execution
+trap unlock EXIT
+
+if is_locked; then
+    echo "ERROR: Package manager is locked"
+    exit "$EXIT_FAILURE"
+fi
+lock
+
+ARGS=$(getopt -o "I:R:S:LHVqcneg" -l "install:,remove:,show:,list,help,version,quiet,check,clean,reinstall,ignore" -- "$@") || {
+    show_help
+    exit "$EXIT_FAILURE"
+}
+
+eval set -- "$ARGS"
+
+CLEAN="no"
+QUIET="no"
+REINSTALL="no"
+CHECK="no"
+IGNORE="no"
+
+while true; do
+    case "$1" in
+        -I|--install) shift; [[ -n "$1" ]] && { check_user && pkginstall "$1"; }; shift ;;
+        -R|--remove) shift; [[ -n "$1" ]] && { check_user && pkgremove "$1"; }; shift ;;
+        -S|--show) shift; [[ -n "$1" ]] && pkginfo "$1"; shift ;;
+        -L|--list) shift; pkglist ;;
+        -H|--help) shift; show_help ;;
+        -V|--version) shift; show_version ;;
+        -q|--quiet) shift; QUIET="yes" ;;
+        -c|--check) shift; CHECK="yes" ;;
+        -n|--clean) shift; CLEAN="yes" ;;
+        -e|--reinstall) shift; REINSTALL="yes" ;;
+        -g|--ignore) shift; IGNORE="yes" ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done

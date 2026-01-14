@@ -1,0 +1,33 @@
+# --- Rust Build Artifacts ---
+/target
+/debug
+/release
+**/*.rs.bk
+
+# --- SQLite Database (Raven Metadata) ---
+# We ignore the DB so local testing doesn't mess up the repo
+*.db
+*.db-shm
+*.db-wal
+metadata.db
+
+# --- Raven Runtime & Temp Files ---
+# Ignored to keep the repo clean from local build artifacts
+raven_build/
+raven_stage/
+raven_recipes/
+
+# --- Configuration ---
+# Ignore actual config to protect local paths/secrets
+config.toml
+
+# --- IDE & System ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+thumbs.db
+*~
+
+# --- Docker ---
+docker-context/

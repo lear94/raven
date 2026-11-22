@@ -1,0 +1,13 @@
+name = "bison"
+version = "3.8.2"
+description = "LFS 13.1 §8.37 - GNU parser generator"
+dependencies = ["gettext"]
+source_url = "https://ftpmirror.gnu.org/bison/bison-3.8.2.tar.xz"
+sha256_sum = "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2"
+build_commands = [
+  "./configure --prefix=/usr --docdir=/usr/share/doc/bison-3.8.2",
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

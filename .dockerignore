@@ -1,3 +1,8 @@
 target/
 .git/
 **/*.rs.bk
+lfs/sources/*.tar.*
+lfs/sources/*.patch
+lfs/sources/*.part
+lfs/book/
+lfs/output/

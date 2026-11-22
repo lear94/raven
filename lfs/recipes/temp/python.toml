@@ -1,0 +1,15 @@
+name = "python"
+version = "3.14.7"
+description = "LFS 13.1 §7.12 - Python (temporary)"
+dependencies = ["mpdecimal"]
+source_url = "https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tar.xz"
+sha256_sum = "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81"
+build_commands = [
+  '''
+./configure --prefix=/usr       \
+            --enable-shared     \
+            --without-ensurepip \
+            --without-static-libpython''',
+  'make',
+]
+install_commands = ['make DESTDIR=$DESTDIR install']

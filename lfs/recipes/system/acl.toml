@@ -1,0 +1,16 @@
+name = "acl"
+version = "2.4.0"
+description = "LFS 13.1 §8.27 - Access control list utilities"
+dependencies = ["attr"]
+source_url = "https://download.savannah.gnu.org/releases/acl/acl-2.4.0.tar.xz"
+sha256_sum = "e661131456d2708a01c614a0f400e11d7d1bfaeb6f3e74b75bb980b72f0161a3"
+build_commands = [
+  '''
+./configure --prefix=/usr    \
+            --disable-static \
+            --docdir=/usr/share/doc/acl-2.4.0''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

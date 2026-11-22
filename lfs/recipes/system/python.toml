@@ -1,0 +1,49 @@
+name = "python"
+version = "3.14.7"
+description = "LFS 13.1 §8.54 - The Python 3 development environment"
+dependencies = ["mpdecimal"]
+source_url = "https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tar.xz"
+sha256_sum = "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81"
+extra_sources = [
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/Python-3.14.7-openssl_4-1.patch", sha256_sum = "707a0c457192ac2f3b5b8a51481bc5ebd12db22d57c1dbe0256138ee6e070792" },
+  { url = "https://www.python.org/ftp/python/doc/3.14.7/python-3.14.7-docs-html.tar.bz2", sha256_sum = "d484b784ec35c5776c5ff55f81fa984b5251a38b532b24bb00e43148bd73ffe9" },
+]
+build_commands = [
+  "patch -Np1 -i $RAVEN_SOURCES/Python-3.14.7-openssl_4-1.patch",
+  '''
+./configure --prefix=/usr          \
+            --enable-shared        \
+            --with-system-expat    \
+            --enable-optimizations \
+            --without-static-libpython
+''',
+  '''
+# Not in the book: the PGO profiling run (--enable-optimizations) executes a
+# subset of the test suite, and test_pickle writes helper modules into the
+# live /usr/lib/python3.14/site-packages, which is read-only in the build
+# sandbox. Profile without that one test (the profile is only for speed).
+make PROFILE_TASK='-m test --pgo --timeout=$(TESTTIMEOUT) -x test_pickle'''',
+]
+install_commands = [
+  '''
+# 'make install' runs ensurepip with --root=$(DESTDIR)/, so pip lands in /out too.
+make DESTDIR=$DESTDIR install
+''',
+  "install -vd $DESTDIR/etc",
+  '''
+cat > $DESTDIR/etc/pip.conf << EOF
+[global]
+root-user-action = ignore
+disable-pip-version-check = true
+EOF
+''',
+  '''
+install -v -dm755 $DESTDIR/usr/share/doc/python-3.14.7/html
+
+tar --strip-components=1  \
+    --no-same-owner       \
+    --no-same-permissions \
+    -C $DESTDIR/usr/share/doc/python-3.14.7/html \
+    -xvf $RAVEN_SOURCES/python-3.14.7-docs-html.tar.bz2
+''',
+]

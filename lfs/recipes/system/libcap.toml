@@ -1,0 +1,19 @@
+name = "libcap"
+version = "2.78"
+description = "LFS 13.1 §8.28 - POSIX 1003.1e capabilities library"
+dependencies = ["acl"]
+source_url = "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz"
+sha256_sum = "0d621e562fd932ccf67b9660fb018e468a683d7b827541df27813228c996bb11"
+build_commands = [
+  "sed -i '/install -m.*STA/d' libcap/Makefile",
+  'make prefix=/usr lib=lib',
+]
+install_commands = [
+  '''
+# RAISE_SETFCAP=no: "make install" would otherwise run the freshly installed
+# $DESTDIR/usr/sbin/setcap to give itself cap_setfcap=i. In the sandbox that
+# binary cannot find libcap.so.2 (it is only in $DESTDIR, not on the live
+# system), and file capabilities on /out are not guaranteed to survive the
+# copy onto /. The capability is a convenience only.
+make prefix=/usr lib=lib DESTDIR=$DESTDIR RAISE_SETFCAP=no install''',
+]

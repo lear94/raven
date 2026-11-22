@@ -1,0 +1,19 @@
+name = "libffi"
+version = "3.8.0"
+description = "LFS 13.1 §8.51 - Portable foreign function interface library"
+dependencies = ["libelf"]
+source_url = "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz"
+sha256_sum = "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4"
+build_commands = [
+  '''
+# --with-gcc-arch=native optimizes for the build machine's CPU (book); use
+# a generic value if the system will run on a different CPU.
+./configure --prefix=/usr    \
+            --disable-static \
+            --with-gcc-arch=native
+''',
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

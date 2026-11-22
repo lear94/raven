@@ -1,0 +1,17 @@
+name = "sed"
+version = "4.10"
+description = "LFS 13.1 §6.14 - Sed (temporary)"
+dependencies = ["patch"]
+source_url = "https://ftpmirror.gnu.org/sed/sed-4.10.tar.xz"
+sha256_sum = "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr   \
+            --host=$LFS_TGT \
+            --build=$(./build-aux/config.guess)''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+]

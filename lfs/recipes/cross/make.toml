@@ -1,0 +1,17 @@
+name = "make"
+version = "4.4.1"
+description = "LFS 13.1 §6.12 - Make (temporary)"
+dependencies = ["gzip"]
+source_url = "https://ftpmirror.gnu.org/make/make-4.4.1.tar.gz"
+sha256_sum = "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr   \
+            --host=$LFS_TGT \
+            --build=$(build-aux/config.guess)''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+]

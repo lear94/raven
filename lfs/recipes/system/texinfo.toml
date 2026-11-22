@@ -1,0 +1,24 @@
+name = "texinfo"
+version = "7.3"
+description = "LFS 13.1 §8.73 - Programs for reading, writing, and converting info pages"
+dependencies = ["tar"]
+source_url = "https://ftpmirror.gnu.org/texinfo/texinfo-7.3.tar.xz"
+sha256_sum = "51f74eb0f51cfa9873b85264dfdd5d46e8957ec95b88f0fb762f63d9e164c72e"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  'make DESTDIR=$DESTDIR TEXMF=/usr/share/texmf install-tex',
+]
+post_install_commands = [
+  '''
+# The book's optional rebuild of /usr/share/info/dir works on the live
+# directory (all installed info files), so it runs after the commit.
+cd /usr/share/info
+rm -fv dir
+for f in *
+  do install-info $f dir 2>/dev/null || true
+done''',
+]

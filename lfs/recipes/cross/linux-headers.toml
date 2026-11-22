@@ -1,0 +1,18 @@
+name = "linux-headers"
+version = "7.1.8"
+description = "LFS 13.1 §5.4 - Linux API headers"
+dependencies = ["gcc-pass1"]
+source_url = "https://www.kernel.org/pub/linux/kernel/v7.x/linux-7.1.8.tar.xz"
+sha256_sum = "ff01dcb449279d5b4cfccdb01fee639cf5ff1803f1749a77844dd33915422c49"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  'make mrproper',
+  '''
+make headers
+find usr/include -type f ! -name '*.h' -delete''',
+]
+install_commands = [
+  '''
+mkdir -pv $DESTDIR$LFS/usr
+cp -rv usr/include $DESTDIR$LFS/usr''',
+]

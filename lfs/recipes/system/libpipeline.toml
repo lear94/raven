@@ -1,0 +1,13 @@
+name = "libpipeline"
+version = "1.5.8"
+description = "LFS 13.1 §8.69 - Library for manipulating pipelines of subprocesses"
+dependencies = ["kbd"]
+source_url = "https://download.savannah.gnu.org/releases/libpipeline/libpipeline-1.5.8.tar.gz"
+sha256_sum = "1b1203ca152ccd63983c3f2112f7fe6fa5afd453218ede5153d1b31e11bb8405"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

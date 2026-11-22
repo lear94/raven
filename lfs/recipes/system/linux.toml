@@ -1,0 +1,63 @@
+name = "linux"
+version = "7.1.8"
+description = "LFS 13.1 §10.3 - Linux kernel"
+dependencies = ["lfs-config"]
+source_url = "https://www.kernel.org/pub/linux/kernel/v7.x/linux-7.1.8.tar.xz"
+sha256_sum = "ff01dcb449279d5b4cfccdb01fee639cf5ff1803f1749a77844dd33915422c49"
+build_commands = [
+  'make mrproper',
+  # The book configures the kernel interactively (make menuconfig). For an
+  # unattended build: architecture defconfig + virtualization guest drivers
+  # (virtio, so the image boots in QEMU/KVM) + the options the book requires.
+  # To use your own configuration, put it in /etc/raven/linux.config.
+  '''
+if [ -f /etc/raven/linux.config ]; then
+  cp -v /etc/raven/linux.config .config
+  make olddefconfig
+else
+  make defconfig
+  make kvm_guest.config
+  scripts/config \
+    -d WERROR -e PSI -d PSI_DEFAULT_DISABLED -d IKHEADERS \
+    -e CGROUPS -e MEMCG -e CGROUP_SCHED -d RT_GROUP_SCHED \
+    -e RELOCATABLE -e RANDOMIZE_BASE \
+    -e STACKPROTECTOR -e STACKPROTECTOR_STRONG \
+    -e NET -e INET -e IPV6 \
+    -d UEVENT_HELPER -e DEVTMPFS -e DEVTMPFS_MOUNT \
+    -d FW_LOADER_USER_HELPER -e DMIID -e SYSFB_SIMPLEFB \
+    -e TTY -d LEGACY_TIOCSTI \
+    -e DRM -e DRM_PANIC -e DRM_FBDEV_EMULATION -e DRM_SIMPLEDRM -e FRAMEBUFFER_CONSOLE \
+    -e INOTIFY_USER -e TMPFS -e TMPFS_POSIX_ACL \
+    -e EXT4_FS -e VIRTIO_BLK -e VIRTIO_NET -e VIRTIO_CONSOLE
+  case $(uname -m) in
+    x86_64) scripts/config -e PCI -e PCI_MSI -e IOMMU_SUPPORT -e IRQ_REMAP -e X86_X2APIC ;;
+  esac
+  make olddefconfig
+fi''',
+  'make',
+]
+install_commands = [
+  # Book: make modules_install (-> /lib/modules, i.e. /usr/lib/modules).
+  'make INSTALL_MOD_PATH=$DESTDIR/usr modules_install',
+  'install -dv $DESTDIR/boot',
+  '''
+case $(uname -m) in
+  x86_64)  cp -v arch/x86/boot/bzImage   $DESTDIR/boot/vmlinuz-7.1.8-lfs-13.1-systemd ;;
+  aarch64) cp -v arch/arm64/boot/Image   $DESTDIR/boot/vmlinuz-7.1.8-lfs-13.1-systemd ;;
+  *)       cp -v $(make -s image_name)   $DESTDIR/boot/vmlinuz-7.1.8-lfs-13.1-systemd ;;
+esac''',
+  'cp -v System.map $DESTDIR/boot/System.map-7.1.8',
+  'cp -v .config $DESTDIR/boot/config-7.1.8',
+  'install -dv $DESTDIR/usr/share/doc && cp -r Documentation -T $DESTDIR/usr/share/doc/linux-7.1.8',
+  # §10.3.2 module load order.
+  '''
+install -v -m755 -d $DESTDIR/etc/modprobe.d
+cat > $DESTDIR/etc/modprobe.d/usb.conf << "EOF"
+# Begin /etc/modprobe.d/usb.conf
+
+install ohci_hcd /sbin/modprobe ehci_hcd ; /sbin/modprobe -i ohci_hcd ; true
+install uhci_hcd /sbin/modprobe ehci_hcd ; /sbin/modprobe -i uhci_hcd ; true
+
+# End /etc/modprobe.d/usb.conf
+EOF''',
+]

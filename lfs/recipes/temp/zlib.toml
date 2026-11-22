@@ -1,0 +1,14 @@
+name = "zlib"
+version = "1.3.2"
+description = "LFS 13.1 §7.10 - Zlib (temporary)"
+dependencies = ["perl"]
+source_url = "https://zlib.net/fossils/zlib-1.3.2.tar.gz"
+sha256_sum = "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  'rm -fv $DESTDIR/usr/lib/libz.a',
+]

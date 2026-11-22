@@ -1,0 +1,24 @@
+name = "file"
+version = "5.48"
+description = "LFS 13.1 §6.7 - File (temporary)"
+dependencies = ["diffutils"]
+source_url = "https://astron.com/pub/file/file-5.48.tar.gz"
+sha256_sum = "ed14656883b23a364b4057c05595d93252da9bc473d30106519519d0da141283"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+mkdir build
+pushd build
+  ../configure --disable-bzlib      \
+               --disable-libseccomp \
+               --disable-xzlib      \
+               --disable-zlib
+  make
+popd''',
+  './configure --prefix=/usr --host=$LFS_TGT --build=$(./config.guess)',
+  'make FILE_COMPILE=$(pwd)/build/src/file',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+  'rm -v $DESTDIR$LFS/usr/lib/libmagic.la',
+]

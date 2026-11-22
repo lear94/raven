@@ -1,0 +1,22 @@
+name = "bash"
+version = "5.3"
+description = "LFS 13.1 §8.39 - The Bourne-Again Shell"
+dependencies = ["grep"]
+source_url = "https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz"
+sha256_sum = "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
+build_commands = [
+  '''
+./configure --prefix=/usr             \
+            --without-bash-malloc     \
+            --with-installed-readline \
+            --docdir=/usr/share/doc/bash-5.3
+''',
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+  '''
+# The book's 'exec /usr/bin/bash --login' only replaces the interactive
+# shell of the person building; it has no meaning in a recipe.
+''',
+]

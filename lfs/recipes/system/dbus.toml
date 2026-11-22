@@ -1,0 +1,20 @@
+name = "dbus"
+version = "1.16.2"
+description = "LFS 13.1 §8.78 - Message bus system"
+dependencies = ["systemd"]
+source_url = "https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz"
+sha256_sum = "0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2"
+build_commands = [
+  '''
+mkdir build
+cd    build''',
+  'meson setup --prefix=/usr --buildtype=release --wrap-mode=nofallback ..',
+  'ninja',
+]
+install_commands = [
+  '# meson honours the exported DESTDIR=/out',
+  'ninja install',
+  '''
+install -vd $DESTDIR/var/lib/dbus
+ln -sfv /etc/machine-id $DESTDIR/var/lib/dbus''',
+]

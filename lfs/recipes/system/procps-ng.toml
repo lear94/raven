@@ -1,0 +1,19 @@
+name = "procps-ng"
+version = "4.0.7"
+description = "LFS 13.1 §8.80 - Programs for monitoring processes"
+dependencies = ["man-db"]
+source_url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.7.tar.xz"
+sha256_sum = "9d2021f47a4501c667862c9942a92d1953694b21d11bcd1702e83eb594e3d67d"
+build_commands = [
+  '''
+./configure --prefix=/usr                           \
+            --docdir=/usr/share/doc/procps-ng-4.0.7 \
+            --disable-static                        \
+            --disable-kill                          \
+            --enable-watch8bit                      \
+            --with-systemd''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

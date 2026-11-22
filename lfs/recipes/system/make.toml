@@ -1,0 +1,13 @@
+name = "make"
+version = "4.4.1"
+description = "LFS 13.1 §8.70 - Program for controlling the generation of executables"
+dependencies = ["libpipeline"]
+source_url = "https://ftpmirror.gnu.org/make/make-4.4.1.tar.gz"
+sha256_sum = "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

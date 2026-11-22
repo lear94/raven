@@ -1,0 +1,17 @@
+name = "tar"
+version = "1.35"
+description = "LFS 13.1 §6.15 - Tar (temporary)"
+dependencies = ["sed"]
+source_url = "https://ftpmirror.gnu.org/tar/tar-1.35.tar.xz"
+sha256_sum = "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr   \
+            --host=$LFS_TGT \
+            --build=$(build-aux/config.guess)''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+]

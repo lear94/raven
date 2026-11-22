@@ -1,0 +1,13 @@
+name = "man-pages"
+version = "6.18"
+description = "LFS 13.1 §8.3 - Linux man pages"
+dependencies = ["lfs-filesystem"]
+source_url = "https://www.kernel.org/pub/linux/docs/man-pages/man-pages-6.18.tar.xz"
+sha256_sum = "c934fadc8b59748c68227a34f6581d2ddf8282b73cdcd52546c8cd88b74b24d1"
+build_commands = [
+  '# Libxcrypt installs better versions of the password hashing man pages',
+  'rm -v man3/crypt*',
+]
+install_commands = [
+  'make -R GIT=false prefix=/usr DESTDIR=$DESTDIR install',
+]

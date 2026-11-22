@@ -207,6 +207,7 @@ impl Reactor {
                     self.tm.install_package(recipe, &output.out_dir).await?;
                 }
                 self.builder.cleanup(&output);
+                self.builder.post_install(recipe).await?;
                 crate::signals::check_interrupted()
             }
             .await;
@@ -243,8 +244,11 @@ mod tests {
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             source_url: "https://example.com/x.tar.gz".into(),
             sha256_sum: HashSum("a".repeat(64)),
+            extra_sources: vec![],
             build_commands: vec![],
             install_commands: vec![],
+            post_install_commands: vec![],
+            overwrites: vec![],
         }
     }
 

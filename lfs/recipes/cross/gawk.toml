@@ -1,0 +1,19 @@
+name = "gawk"
+version = "5.4.1"
+description = "LFS 13.1 §6.9 - Gawk (temporary)"
+dependencies = ["findutils"]
+source_url = "https://ftpmirror.gnu.org/gawk/gawk-5.4.1.tar.xz"
+sha256_sum = "07f6f7342b7febe4313fc2c2542ad93d64fe20ad8717200109f105a826f5fd37"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+sed -i 's/extras//' Makefile.in''',
+  '''
+./configure --prefix=/usr   \
+            --host=$LFS_TGT \
+            --build=$(build-aux/config.guess)''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+]

@@ -1,0 +1,16 @@
+name = "xz"
+version = "5.8.3"
+description = "LFS 13.1 §8.8 - Xz (LZMA) compression programs and library"
+dependencies = ["bzip2"]
+source_url = "https://github.com//tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.xz"
+sha256_sum = "fff1ffcf2b0da84d308a14de513a1aa23d4e9aa3464d17e64b9714bfdd0bbfb6"
+build_commands = [
+  '''
+./configure --prefix=/usr    \
+            --disable-static \
+            --docdir=/usr/share/doc/xz-5.8.3''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

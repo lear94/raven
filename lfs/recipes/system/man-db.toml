@@ -1,0 +1,21 @@
+name = "man-db"
+version = "2.13.1"
+description = "LFS 13.1 §8.79 - Programs for finding and viewing man pages"
+dependencies = ["dbus"]
+source_url = "https://download.savannah.gnu.org/releases/man-db/man-db-2.13.1.tar.xz"
+sha256_sum = "8afebb6f7eb6bb8542929458841f5c7e6f240e30c86358c1fbcefbea076c87d9"
+build_commands = [
+  '''
+./configure --prefix=/usr                         \
+            --docdir=/usr/share/doc/man-db-2.13.1 \
+            --sysconfdir=/etc                     \
+            --disable-setuid                      \
+            --enable-cache-owner=bin              \
+            --with-browser=/usr/bin/lynx          \
+            --with-vgrind=/usr/bin/vgrind         \
+            --with-grap=/usr/bin/grap''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

@@ -1,0 +1,15 @@
+name = "sed"
+version = "4.10"
+description = "LFS 13.1 §8.34 - GNU stream editor"
+dependencies = ["ncurses"]
+source_url = "https://ftpmirror.gnu.org/sed/sed-4.10.tar.xz"
+sha256_sum = "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
+build_commands = [
+  "./configure --prefix=/usr",
+  "make",
+  "make html",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+  "install -vDm644 doc/sed.html -t $DESTDIR/usr/share/doc/sed-4.10",
+]

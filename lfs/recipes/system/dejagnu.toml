@@ -1,0 +1,21 @@
+name = "dejagnu"
+version = "1.6.3"
+description = "LFS 13.1 §8.19 - DejaGNU testing framework"
+dependencies = ["expect"]
+source_url = "https://ftpmirror.gnu.org/dejagnu/dejagnu-1.6.3.tar.gz"
+sha256_sum = "87daefacd7958b4a69f88c6856dbd1634261963c414079d0c371f589cd66a2e3"
+build_commands = [
+  '''
+mkdir -v build
+cd       build''',
+  '''
+../configure --prefix=/usr
+makeinfo --html --no-split -o doc/dejagnu.html ../doc/dejagnu.texi
+makeinfo --plaintext       -o doc/dejagnu.txt  ../doc/dejagnu.texi''',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+install -v -dm755  $DESTDIR/usr/share/doc/dejagnu-1.6.3
+install -v -m644   doc/dejagnu.{html,txt} $DESTDIR/usr/share/doc/dejagnu-1.6.3''',
+]

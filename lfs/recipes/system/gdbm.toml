@@ -1,0 +1,17 @@
+name = "gdbm"
+version = "1.26"
+description = "LFS 13.1 §8.41 - GNU Database Manager"
+dependencies = ["libtool"]
+source_url = "https://ftpmirror.gnu.org/gdbm/gdbm-1.26.tar.gz"
+sha256_sum = "6a24504a14de4a744103dcb936be976df6fbe88ccff26065e54c1c47946f4a5e"
+build_commands = [
+  '''
+./configure --prefix=/usr    \
+            --disable-static \
+            --enable-libgdbm-compat
+''',
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

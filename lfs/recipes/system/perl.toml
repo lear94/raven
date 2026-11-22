@@ -1,0 +1,33 @@
+name = "perl"
+version = "5.44.0"
+description = "LFS 13.1 §8.46 - Practical Extraction and Report Language"
+dependencies = ["less"]
+source_url = "https://www.cpan.org/src/5.0/perl-5.44.0.tar.xz"
+sha256_sum = "505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91"
+build_commands = [
+  '''
+export BUILD_ZLIB=False
+export BUILD_BZIP2=0
+''',
+  '''
+sh Configure -des                                          \
+             -D prefix=/usr                                \
+             -D vendorprefix=/usr                          \
+             -D privlib=/usr/lib/perl5/5.44/core_perl      \
+             -D archlib=/usr/lib/perl5/5.44/core_perl      \
+             -D sitelib=/usr/lib/perl5/5.44/site_perl      \
+             -D sitearch=/usr/lib/perl5/5.44/site_perl     \
+             -D vendorlib=/usr/lib/perl5/5.44/vendor_perl  \
+             -D vendorarch=/usr/lib/perl5/5.44/vendor_perl \
+             -D man1dir=/usr/share/man/man1                \
+             -D man3dir=/usr/share/man/man3                \
+             -D pager="/usr/bin/less -isR"                 \
+             -D useshrplib                                 \
+             -D usethreads
+''',
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+  "unset BUILD_ZLIB BUILD_BZIP2",
+]

@@ -1,0 +1,38 @@
+name = "e2fsprogs"
+version = "1.47.4"
+description = "LFS 13.1 §8.82 - Utilities for handling the ext2/ext3/ext4 file systems"
+dependencies = ["util-linux"]
+source_url = "https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.4/e2fsprogs-1.47.4.tar.gz"
+sha256_sum = "2cec05f39c20ee621f14926195664e66e6017190ac8e4bbdb16d86082e43c5da"
+build_commands = [
+  '''
+mkdir -v build
+cd       build''',
+  '''
+../configure --prefix=/usr       \
+             --sysconfdir=/etc   \
+             --enable-elf-shlibs \
+             --disable-libblkid  \
+             --disable-libuuid   \
+             --disable-uuidd     \
+             --disable-fsck''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  'rm -fv $DESTDIR/usr/lib/{libcom_err,libe2p,libext2fs,libss}.a',
+  '''
+# install-info on the live /usr/share/info/dir happens in post_install_commands
+gunzip -v $DESTDIR/usr/share/info/libext2fs.info.gz''',
+  '''
+makeinfo -o      doc/com_err.info ../lib/et/com_err.texinfo
+install -v -m644 doc/com_err.info $DESTDIR/usr/share/info''',
+  '''
+# The book's optional sed removing metadata_csum_seed from /etc/mke2fs.conf
+# (only for non-LFS/BLFS tools that need it) is not applied.''',
+]
+post_install_commands = [
+  '''
+install-info --dir-file=/usr/share/info/dir /usr/share/info/libext2fs.info
+install-info --dir-file=/usr/share/info/dir /usr/share/info/com_err.info''',
+]

@@ -37,7 +37,7 @@ impl From<&str> for PackageName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HashSum(pub String);
 
@@ -51,12 +51,51 @@ pub struct Recipe {
     pub target_arch: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// Main source archive. May be omitted (together with `sha256_sum`) for
+    /// packages that only run commands, e.g. creating a directory layout.
+    #[serde(default)]
     pub source_url: String,
+    #[serde(default)]
     pub sha256_sum: HashSum,
+    /// Additional files (patches, bundled dependencies...). They are verified
+    /// and cached like the main source and copied, unextracted, to `/sources`
+    /// inside the build sandbox.
+    #[serde(default)]
+    pub extra_sources: Vec<ExtraSource>,
     #[serde(default)]
     pub build_commands: Vec<String>,
     #[serde(default)]
     pub install_commands: Vec<String>,
+    /// Commands run on the live system (outside the sandbox, as root, in `/`)
+    /// after the package files have been committed. For actions that cannot
+    /// be expressed as files in `DESTDIR`, e.g. `pwconv` or `ldconfig`.
+    #[serde(default)]
+    pub post_install_commands: Vec<String>,
+    /// Packages whose files this package may replace. Ownership of those files
+    /// moves to this package (e.g. a second build of a toolchain library).
+    /// Conflicts with any other package are still refused.
+    #[serde(default)]
+    pub overwrites: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExtraSource {
+    pub url: String,
+    pub sha256_sum: HashSum,
+}
+
+impl ExtraSource {
+    /// File name used inside `/sources` (last path component of the URL).
+    pub fn file_name(&self) -> &str {
+        let url = self.url.trim();
+        let url = url.split(['?', '#']).next().unwrap_or(url);
+        url.rsplit('/').next().unwrap_or(url)
+    }
+}
+
+fn is_sha256(s: &str) -> bool {
+    let s = s.trim();
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +105,11 @@ pub struct DependencyReq {
 }
 
 impl Recipe {
+    /// Whether the recipe has a main source archive.
+    pub fn has_source(&self) -> bool {
+        !self.source_url.trim().is_empty()
+    }
+
     pub fn parsed_version(&self) -> Result<Version, RavenError> {
         parse_version(&self.version)
     }
@@ -92,18 +136,53 @@ impl Recipe {
         }
         self.parsed_version()
             .map_err(|e| RavenError::InvalidRecipe(format!("{}: {}", self.name, e)))?;
-        let sum = self.sha256_sum.0.trim();
-        if sum.len() != 64 || !sum.chars().all(|c| c.is_ascii_hexdigit()) {
+        if self.has_source() {
+            if !is_sha256(&self.sha256_sum.0) {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: sha256_sum must be 64 hexadecimal characters",
+                    self.name
+                )));
+            }
+        } else if !self.sha256_sum.0.trim().is_empty() {
             return Err(RavenError::InvalidRecipe(format!(
-                "{}: sha256_sum must be 64 hexadecimal characters",
+                "{}: sha256_sum given without source_url",
                 self.name
             )));
         }
-        if self.source_url.trim().is_empty() {
-            return Err(RavenError::InvalidRecipe(format!(
-                "{}: source_url is empty",
-                self.name
-            )));
+        for o in &self.overwrites {
+            if !PackageName::is_valid(o) || o == &self.name.0 {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: invalid 'overwrites' entry '{}'",
+                    self.name, o
+                )));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for extra in &self.extra_sources {
+            let fname = extra.file_name();
+            if extra.url.trim().is_empty()
+                || fname.is_empty()
+                || fname == "."
+                || fname == ".."
+                || fname.contains('\\')
+            {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: invalid extra source URL '{}'",
+                    self.name, extra.url
+                )));
+            }
+            if !is_sha256(&extra.sha256_sum.0) {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: extra source '{}': sha256_sum must be 64 hexadecimal characters",
+                    self.name, extra.url
+                )));
+            }
+            if !seen.insert(fname.to_string()) {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: two extra sources are named '{}'",
+                    self.name, fname
+                )));
+            }
         }
         for dep in self.parse_dependencies()? {
             if dep.name == self.name {
@@ -196,6 +275,9 @@ pub enum RavenError {
         tail: String,
     },
 
+    #[error("Package '{package}' was installed, but its post-install commands failed:\n{output}")]
+    PostInstallFailed { package: String, output: String },
+
     #[error("Invalid recipe: {0}")]
     InvalidRecipe(String),
 
@@ -243,8 +325,11 @@ mod tests {
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             source_url: "https://example.com/x.tar.gz".into(),
             sha256_sum: HashSum("a".repeat(64)),
+            extra_sources: vec![],
             build_commands: vec![],
             install_commands: vec![],
+            post_install_commands: vec![],
+            overwrites: vec![],
         }
     }
 
@@ -298,6 +383,36 @@ mod tests {
         assert!(recipe("ok", "1.0", &["ok"]).validate().is_err());
         let mut r = recipe("ok", "1.0", &[]);
         r.sha256_sum = HashSum("123".into());
+        assert!(r.validate().is_err());
+
+        // Source-less recipes are allowed, but not a checksum without a source.
+        let mut r = recipe("meta", "1.0", &[]);
+        r.source_url.clear();
+        r.sha256_sum = HashSum::default();
+        assert!(r.validate().is_ok());
+        r.sha256_sum = HashSum("a".repeat(64));
+        assert!(r.validate().is_err());
+
+        // Extra sources need a checksum and distinct file names.
+        let mut r = recipe("ok", "1.0", &[]);
+        let patch = ExtraSource {
+            url: "https://example.com/p/fix-1.patch".into(),
+            sha256_sum: HashSum("c".repeat(64)),
+        };
+        assert_eq!(patch.file_name(), "fix-1.patch");
+        r.extra_sources.push(patch.clone());
+        assert!(r.validate().is_ok());
+        r.extra_sources.push(patch.clone());
+        assert!(r.validate().is_err());
+        r.extra_sources = vec![ExtraSource {
+            url: "https://example.com/".into(),
+            sha256_sum: HashSum("c".repeat(64)),
+        }];
+        assert!(r.validate().is_err());
+        r.extra_sources = vec![ExtraSource {
+            sha256_sum: HashSum("zz".into()),
+            ..patch
+        }];
         assert!(r.validate().is_err());
     }
 }

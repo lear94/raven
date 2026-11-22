@@ -85,15 +85,34 @@ sha256_sum = "31e066137a962676e89f69d1b65382de95a7ef7d914b8cb956f41ea72e0f516b"
 build_commands = ["./configure --prefix=/usr", "make -j$RAVEN_JOBS"]
 install_commands = ["make install"]
 # target_arch = "aarch64"                     # optional, for cross builds
+extra_sources = [                             # optional: patches, bundled tarballs
+  { url = "https://example.com/hello-fix-1.patch", sha256_sum = "..." },
+]
+post_install_commands = ["ldconfig"]          # optional, run on the live system
+overwrites = ["libfoo-bootstrap"]             # optional, may replace these packages' files
 ```
+
+- `source_url`/`sha256_sum` may be omitted together for packages that only run commands (e.g. create a directory layout or config files); the script then starts in an empty `/src`.
+- `extra_sources` are verified and cached like the main source and copied, unextracted, to `$RAVEN_SOURCES` (`/sources`) in the sandbox.
+- `post_install_commands` run as root in `/`, outside the sandbox, after the files are committed (for things like `pwconv` or `ldconfig`). If they fail, the package stays installed and the error is reported.
+- `overwrites` lists packages whose files this package may replace; ownership of those files moves to the new package. Conflicts with any other package are still refused.
+- Installed files keep the owner, group and mode (including setuid bits) they had in `/out`.
 
 Build environment:
 
 - If the archive contains a single top-level directory, commands run inside it; otherwise in `/src`.
 - `DESTDIR=/out` is exported: install everything under `/out`. Writing to host directories fails (they are read-only).
-- Variables: `RAVEN_PKG_NAME`, `RAVEN_PKG_VERSION`, `RAVEN_JOBS` (CPU count), `PATH`, `HOME=/tmp`, `LC_ALL=C`.
+- Variables: `RAVEN_PKG_NAME`, `RAVEN_PKG_VERSION`, `RAVEN_JOBS` (CPU count), `RAVEN_SOURCES`, `PATH`, `HOME=/tmp`, `LC_ALL=C`.
+- Host settings (environment of the `raven` process):
+  - `RAVEN_PASSENV="VAR1 VAR2"` forwards host variables into builds (and post-install commands).
+  - `RAVEN_SANDBOX_BINDS=/dir1:/dir2` mounts host directories read-only, at the same path, inside the sandbox.
+  - `RAVEN_NO_EXTRACT=/path1:/path2` drops those paths from every build output (like pacman's `NoExtract`), e.g. `/usr/share/info/dir`.
 - Requirement syntax follows SemVer: `>= 1.0`, `< 2`, `= 1.2.3`, `~1.2`; a bare version (`1.2.0`) means compatible (`^1.2.0`).
 - `target_arch`: omit it (or use `any`) for native builds. `aarch64` on an x86_64 host (and vice versa) exports `CC`, `CXX`, `AR` and `CROSS_COMPILE` for the matching `*-linux-gnu` cross toolchain.
+
+## Linux From Scratch
+
+`lfs/` builds a complete **LFS 13.1-systemd** system with Raven: 115 recipes (cross toolchain, temporary tools and final system, kernel included), driver scripts and a Docker build host. See [`lfs/README.md`](lfs/README.md).
 
 ## Architecture
 

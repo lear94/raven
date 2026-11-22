@@ -1,0 +1,22 @@
+name = "mpfr"
+version = "4.2.2"
+description = "LFS 13.1 §8.24 - Multiple precision floating-point library"
+dependencies = ["gmp"]
+source_url = "https://ftpmirror.gnu.org/mpfr/mpfr-4.2.2.tar.xz"
+sha256_sum = "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01"
+build_commands = [
+  '''
+./configure --prefix=/usr        \
+            --disable-static     \
+            --enable-thread-safe \
+            --docdir=/usr/share/doc/mpfr-4.2.2''',
+  '''
+make
+make html''',
+  '# The book calls the MPFR test suite (make check) critical; it is skipped here.',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+make DESTDIR=$DESTDIR install-html''',
+]

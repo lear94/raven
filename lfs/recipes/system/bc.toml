@@ -1,0 +1,13 @@
+name = "bc"
+version = "7.0.3"
+description = "LFS 13.1 §8.15 - Arbitrary precision numeric processing language"
+dependencies = ["m4"]
+source_url = "https://github.com/gavinhoward/bc/releases/download/7.0.3/bc-7.0.3.tar.xz"
+sha256_sum = "91eb74caed0ee6655b669711a4f350c25579778694df248e28363318e03c7fc4"
+build_commands = [
+  "CC='gcc -std=c99' ./configure --prefix=/usr -G -O3 -r",
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

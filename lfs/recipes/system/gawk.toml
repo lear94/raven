@@ -1,0 +1,21 @@
+name = "gawk"
+version = "5.4.1"
+description = "LFS 13.1 §8.31 - GNU awk, a pattern scanning and processing language"
+dependencies = ["shadow"]
+source_url = "https://ftpmirror.gnu.org/gawk/gawk-5.4.1.tar.xz"
+sha256_sum = "07f6f7342b7febe4313fc2c2542ad93d64fe20ad8717200109f105a826f5fd37"
+build_commands = [
+  "sed -i 's/extras//' Makefile.in",
+  "./configure --prefix=/usr",
+  "make",
+]
+install_commands = [
+  '''
+# The book's 'rm -f /usr/bin/gawk-5.4.1' clears the chapter 6 hard link on the
+# live system so 'make install' does not fail; $DESTDIR starts empty, so it is
+# not needed (the untracked file is replaced when /out is committed).
+make DESTDIR=$DESTDIR install
+''',
+  "ln -sv gawk.1 $DESTDIR/usr/share/man/man1/awk.1",
+  "install -vDm644 doc/{awkforai.txt,*.{eps,pdf,jpg}} -t $DESTDIR/usr/share/doc/gawk-5.4.1",
+]

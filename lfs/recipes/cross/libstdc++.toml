@@ -1,0 +1,27 @@
+name = "libstdc++"
+version = "16.2.0"
+description = "LFS 13.1 §5.6 - Libstdc++ from GCC (cross)"
+dependencies = ["glibc"]
+source_url = "https://ftpmirror.gnu.org/gcc/gcc-16.2.0/gcc-16.2.0.tar.xz"
+sha256_sum = "e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+mkdir -v build
+cd       build''',
+  '''
+../libstdc++-v3/configure      \
+    --host=$LFS_TGT            \
+    --build=$(../config.guess) \
+    CXX=$LFS_TGT-gcc           \
+    --prefix=/usr              \
+    --disable-multilib         \
+    --disable-nls              \
+    --disable-libstdcxx-pch    \
+    --with-gxx-include-dir=/tools/$LFS_TGT/include/c++/16.2.0''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+  'rm -v $DESTDIR$LFS/usr/lib/lib{stdc++{,exp,fs},supc++}.la',
+]

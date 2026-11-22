@@ -1,0 +1,13 @@
+name = "gperf"
+version = "3.3"
+description = "LFS 13.1 §8.42 - Perfect hash function generator"
+dependencies = ["gdbm"]
+source_url = "https://ftpmirror.gnu.org/gperf/gperf-3.3.tar.gz"
+sha256_sum = "fd87e0aba7e43ae054837afd6cd4db03a3f2693deb3619085e6ed9d8d9604ad8"
+build_commands = [
+  "./configure --prefix=/usr --docdir=/usr/share/doc/gperf-3.3",
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

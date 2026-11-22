@@ -1,0 +1,13 @@
+name = "diffutils"
+version = "3.12"
+description = "LFS 13.1 §8.62 - Programs that show differences between files or directories"
+dependencies = ["coreutils"]
+source_url = "https://ftpmirror.gnu.org/diffutils/diffutils-3.12.tar.xz"
+sha256_sum = "7c8b7f9fc8609141fdea9cece85249d308624391ff61dedaf528fcb337727dfd"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

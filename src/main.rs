@@ -35,7 +35,10 @@ const DEFAULT_HOME: &str = "/var/lib/raven";
     name = "raven",
     version,
     about = "Transactional, sandboxed, source-based package manager",
-    after_help = "Data directory: /var/lib/raven (override with the RAVEN_HOME environment variable)"
+    after_help = "Data directory: /var/lib/raven (override with the RAVEN_HOME environment variable)\n\
+                  Build environment: RAVEN_PASSENV=\"VAR1 VAR2\" forwards host variables, \
+                  RAVEN_SANDBOX_BINDS=/dir1:/dir2 mounts host directories read-only, \
+                  RAVEN_NO_EXTRACT=/path1:/path2 never installs those paths"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -170,8 +173,43 @@ async fn open_db(paths: &Paths) -> anyhow::Result<Arc<TransactionManager>> {
     Ok(Arc::new(tm))
 }
 
+/// Builds are hermetic by default. Two variables relax that on purpose:
+/// `RAVEN_PASSENV` (names of host variables to forward, separated by spaces or
+/// commas) and `RAVEN_SANDBOX_BINDS` (colon-separated host directories made
+/// visible read-only at the same path), e.g. to build a toolchain in `$LFS`.
+/// `RAVEN_NO_EXTRACT` (colon-separated absolute paths) lists files that are
+/// never installed, such as shared indexes written by many packages.
+fn make_builder(paths: &Paths) -> anyhow::Result<Builder> {
+    let pass_env: Vec<String> = std::env::var("RAVEN_PASSENV")
+        .unwrap_or_default()
+        .split([' ', ',', '\t', '\n'])
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let binds: Vec<PathBuf> = std::env::var("RAVEN_SANDBOX_BINDS")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let no_extract: Vec<PathBuf> = std::env::var("RAVEN_NO_EXTRACT")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let builder = Builder::new(paths.build.clone(), paths.cache.clone())?
+        .pass_env(&pass_env)?
+        .extra_binds(binds)?
+        .no_extract(no_extract)?;
+    if !pass_env.is_empty() {
+        log_info(&format!("Forwarding to builds: {}", pass_env.join(" ")));
+    }
+    Ok(builder)
+}
+
 fn make_reactor(paths: &Paths, tm: Arc<TransactionManager>) -> anyhow::Result<Reactor> {
-    let builder = Builder::new(paths.build.clone(), paths.cache.clone())?;
+    let builder = make_builder(paths)?;
     Ok(Reactor::new(tm, Arc::new(builder)))
 }
 

@@ -1,0 +1,51 @@
+name = "ncurses"
+version = "6.6"
+description = "LFS 13.1 §8.33 - Libraries for terminal-independent handling of character screens"
+dependencies = ["gcc"]
+source_url = "https://invisible-mirror.net/archives/ncurses/ncurses-6.6.tar.gz"
+sha256_sum = "355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
+build_commands = [
+  '''
+./configure --prefix=/usr           \
+            --mandir=/usr/share/man \
+            --with-shared           \
+            --without-debug         \
+            --without-normal        \
+            --with-cxx-shared       \
+            --enable-pc-files       \
+            --with-pkg-config-libdir=/usr/lib/pkgconfig
+''',
+  "make",
+]
+install_commands = [
+  '''
+# The book installs into $PWD/dest and copies with 'cp --remove-destination'
+# to avoid overwriting the in-use libncursesw.so.6.6 in place; here the
+# install goes to $DESTDIR and Raven commits /out onto / itself.
+make DESTDIR=$DESTDIR install
+''',
+  '''
+sed -e 's/^#if.*XOPEN.*$/#if 1/' \
+    -i $DESTDIR/usr/include/curses.h
+''',
+  '''
+for lib in ncurses form panel menu ; do
+    ln -sfv lib${lib}w.so $DESTDIR/usr/lib/lib${lib}.so
+    ln -sfv ${lib}w.pc    $DESTDIR/usr/lib/pkgconfig/${lib}.pc
+done
+''',
+  "ln -sfv libncursesw.so $DESTDIR/usr/lib/libcurses.so",
+  "install -vd $DESTDIR/usr/share/doc && cp -v -R doc -T $DESTDIR/usr/share/doc/ncurses-6.6",
+  '''
+# Optional ABI 5 non-wide libraries for binary-only applications (book).
+make distclean
+./configure --prefix=/usr    \
+            --with-shared    \
+            --without-normal \
+            --without-debug  \
+            --without-cxx-binding \
+            --with-abi-version=5
+make sources libs
+cp -av lib/lib*.so.5* $DESTDIR/usr/lib
+''',
+]

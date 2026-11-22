@@ -1,0 +1,41 @@
+name = "ncurses"
+version = "6.6"
+description = "LFS 13.1 §6.3 - Ncurses (temporary)"
+dependencies = ["m4"]
+source_url = "https://invisible-mirror.net/archives/ncurses/ncurses-6.6.tar.gz"
+sha256_sum = "355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+mkdir build
+pushd build
+  ../configure --prefix=$LFS/tools AWK=gawk
+  make -C include
+  make -C progs tic
+popd''',
+  '''
+./configure --prefix=/usr                \
+            --host=$LFS_TGT              \
+            --build=$(./config.guess)    \
+            --mandir=/usr/share/man      \
+            --with-manpage-format=normal \
+            --with-shared                \
+            --without-normal             \
+            --with-cxx-shared            \
+            --without-debug              \
+            --without-ada                \
+            --disable-stripping          \
+            AWK=gawk''',
+  'make',
+]
+install_commands = [
+  '''
+mkdir -pv $DESTDIR$LFS/tools/bin
+install build/progs/tic $DESTDIR$LFS/tools/bin''',
+  'export PATH=$DESTDIR$LFS/tools/bin:$PATH',
+  '''
+make DESTDIR=$DESTDIR$LFS install
+ln -sv libncursesw.so $DESTDIR$LFS/usr/lib/libncurses.so
+sed -e 's/^#if.*XOPEN.*$/#if 1/' \
+    -i $DESTDIR$LFS/usr/include/curses.h''',
+]

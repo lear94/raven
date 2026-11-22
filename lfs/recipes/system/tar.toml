@@ -1,0 +1,21 @@
+name = "tar"
+version = "1.35"
+description = "LFS 13.1 §8.72 - Archiving program"
+dependencies = ["patch"]
+source_url = "https://ftpmirror.gnu.org/tar/tar-1.35.tar.xz"
+sha256_sum = "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16"
+extra_sources = [
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/tar-1.35-acl_fix-1.patch", sha256_sum = "51cadccfcb2f29cfdb4ec18015360100aa167179a72ece040a6a8612aeec5081" },
+]
+build_commands = [
+  'patch -Np1 -i $RAVEN_SOURCES/tar-1.35-acl_fix-1.patch',
+  '''
+FORCE_UNSAFE_CONFIGURE=1  \
+./configure --prefix=/usr''',
+  'make',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+make DESTDIR=$DESTDIR -C doc install-html docdir=/usr/share/doc/tar-1.35''',
+]

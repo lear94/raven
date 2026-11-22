@@ -36,8 +36,11 @@ mod tests {
             dependencies: vec![],
             source_url: "x".into(),
             sha256_sum: HashSum(String::new()),
+            extra_sources: vec![],
             build_commands: vec![],
             install_commands: vec![],
+            post_install_commands: vec![],
+            overwrites: vec![],
         }
     }
 

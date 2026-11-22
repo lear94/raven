@@ -1,0 +1,27 @@
+name = "pkgconf"
+version = "3.0.5"
+description = "LFS 13.1 §8.21 - Pkgconf, a pkg-config implementation"
+dependencies = ["ninja"]
+source_url = "https://distfiles.ariadne.space/pkgconf/pkgconf-3.0.5.tar.xz"
+sha256_sum = "3acd3a8a3cce65a8d620321855d92fb602e026cbe8e13ee36bdec58483b59ace"
+extra_sources = [
+  { url = "https://github.com/mesonbuild/meson/releases/download/1.12.0/meson-1.12.0.tar.gz", sha256_sum = "88afe0c20e52030218924ac37d0c81c59b4b5f3ae3752c8c6d7470c7d365886c" },
+]
+build_commands = [
+  '# Work around a circular dependency on meson by running it from its tarball',
+  'tar -xf $RAVEN_SOURCES/meson-1.12.0.tar.gz',
+  '''
+mkdir build
+cd    build
+
+python3 ../meson-1.12.0/meson.py setup --prefix=/usr --buildtype=release ..''',
+  'ninja',
+]
+install_commands = [
+  '''
+DESTDIR=$DESTDIR ninja install
+mv $DESTDIR/usr/share/doc/pkgconf{,-3.0.5}''',
+  '''
+ln -sv pkgconf   $DESTDIR/usr/bin/pkg-config
+ln -sv pkgconf.1 $DESTDIR/usr/share/man/man1/pkg-config.1''',
+]

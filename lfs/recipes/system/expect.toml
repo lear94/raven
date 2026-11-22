@@ -1,0 +1,37 @@
+name = "expect"
+version = "5.45.4"
+description = "LFS 13.1 §8.18 - Expect, a tool for automating interactive programs"
+dependencies = ["tcl"]
+source_url = "https://prdownloads.sourceforge.net/expect/expect5.45.4.tar.gz"
+sha256_sum = "49a7da83b0bdd9f46d04a04deec19c7767bb9a323e40c4781f89caf760b92c34"
+extra_sources = [
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/expect-5.45.4-gcc15-1.patch", sha256_sum = "ab5fc0af9e2e0f80d7623c1a3a3dbeb1da3d8c9134276792199df401f9eb2cec" },
+  { url = "https://ftpmirror.gnu.org/m4/m4-1.4.21.tar.xz", sha256_sum = "f25c6ab51548a73a75558742fb031e0625d6485fe5f9155949d6486a2408ab66" },
+]
+build_commands = [
+  '''
+# The book first checks that PTYs work in the chroot with
+# python3 -c 'from pty import spawn; spawn(["echo", "ok"])'. That check only
+# matters for the (skipped) test suite and the build sandbox does not
+# guarantee a devpts mount, so it is left out.
+patch -Np1 -i $RAVEN_SOURCES/expect-5.45.4-gcc15-1.patch''',
+  '''
+# Not in the book: expect ships a config.guess/config.sub from 2003 that does
+# not know aarch64. Use the current ones from the M4 tarball (any arch).
+tar -xf $RAVEN_SOURCES/m4-1.4.21.tar.xz m4-1.4.21/build-aux/config.guess m4-1.4.21/build-aux/config.sub
+cp -v m4-1.4.21/build-aux/config.{guess,sub} tclconfig/
+rm -rf m4-1.4.21''',
+  '''
+./configure --prefix=/usr           \
+            --with-tcl=/usr/lib     \
+            --enable-shared         \
+            --disable-rpath         \
+            --mandir=/usr/share/man \
+            --with-tclinclude=/usr/include''',
+  'make',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+ln -svf expect5.45.4/libexpect5.45.4.so $DESTDIR/usr/lib''',
+]

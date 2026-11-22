@@ -1,0 +1,24 @@
+name = "coreutils"
+version = "9.11"
+description = "LFS 13.1 §6.5 - Coreutils (temporary)"
+dependencies = ["bash"]
+source_url = "https://ftpmirror.gnu.org/coreutils/coreutils-9.11.tar.xz"
+sha256_sum = "394024eda0a5955217ceda9cd1201e65dc8fa3aa29c2951135a49521d57c3cc3"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr                     \
+            --host=$LFS_TGT                   \
+            --build=$(build-aux/config.guess) \
+            --enable-install-program=hostname''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+  '''
+mkdir -pv $DESTDIR$LFS/usr/sbin
+mv -v $DESTDIR$LFS/usr/bin/chroot              $DESTDIR$LFS/usr/sbin
+mkdir -pv $DESTDIR$LFS/usr/share/man/man8
+mv -v $DESTDIR$LFS/usr/share/man/man1/chroot.1 $DESTDIR$LFS/usr/share/man/man8/chroot.8
+sed -i 's/"1"/"8"/'                    $DESTDIR$LFS/usr/share/man/man8/chroot.8''',
+]

@@ -1,0 +1,25 @@
+name = "binutils-pass1"
+version = "2.47"
+description = "LFS 13.1 §5.2 - Binutils, pass 1 (cross)"
+dependencies = ["lfs-layout"]
+source_url = "https://sourceware.org/pub/binutils/releases/binutils-2.47.tar.xz"
+sha256_sum = "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+mkdir -v build
+cd       build''',
+  '''
+../configure --prefix=$LFS/tools \
+             --with-sysroot=$LFS \
+             --target=$LFS_TGT   \
+             --disable-nls       \
+             --enable-gprofng=no \
+             --disable-werror    \
+             --enable-new-dtags  \
+             --enable-default-hash-style=gnu''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

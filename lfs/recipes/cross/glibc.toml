@@ -1,0 +1,43 @@
+name = "glibc"
+version = "2.44"
+description = "LFS 13.1 §5.5 - Glibc (temporary, cross-compiled)"
+dependencies = ["linux-headers"]
+source_url = "https://ftpmirror.gnu.org/glibc/glibc-2.44.tar.xz"
+sha256_sum = "37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667"
+extra_sources = [
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/glibc-fhs-1.patch", sha256_sum = "643552db030e2f2d7ffde4f558e0f5f83d3fabf34a2e0e56ebdb49750ac27b0d" },
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/glibc-2.44-upstream_fixes-1.patch", sha256_sum = "500567ff0a22e295bfe3b55e9b397796f71a19f01e1ff7fb29c9189482ee1809" },
+]
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  'patch -Np1 -i $RAVEN_SOURCES/glibc-fhs-1.patch',
+  'patch -Np1 -i $RAVEN_SOURCES/glibc-2.44-upstream_fixes-1.patch',
+  '''
+mkdir -v build
+cd       build''',
+  '''
+echo "rootsbindir=/usr/sbin" > configparms''',
+  '''
+../configure                             \
+      --prefix=/usr                      \
+      --host=$LFS_TGT                    \
+      --build=$(../scripts/config.guess) \
+      --disable-nscd                     \
+      libc_cv_slibdir=/usr/lib           \
+      --enable-kernel=5.10''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+  '''
+sed '/RTLDLIST=/s@/usr@@g' -i $DESTDIR$LFS/usr/bin/ldd''',
+  '''
+case $(uname -m) in
+    i?86)   ln -sfv ld-linux.so.2 $DESTDIR$LFS/usr/lib/ld-lsb.so.3
+    ;;
+    x86_64) mkdir -pv $DESTDIR$LFS/lib64
+            ln -sfv ../lib/ld-linux-x86-64.so.2 $DESTDIR$LFS/lib64
+            ln -sfv ../lib/ld-linux-x86-64.so.2 $DESTDIR$LFS/lib64/ld-lsb-x86-64.so.3
+    ;;
+esac''',
+]

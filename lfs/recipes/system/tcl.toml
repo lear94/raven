@@ -1,0 +1,42 @@
+name = "tcl"
+version = "8.6.18"
+description = "LFS 13.1 §8.17 - Tool Command Language"
+dependencies = ["flex"]
+source_url = "https://downloads.sourceforge.net/tcl/tcl8.6.18-src.tar.gz"
+sha256_sum = "14f9af32b1767ff718477a8f974ad03c34341097e6b43f4ce54644ee974e268e"
+build_commands = [
+  '''
+SRCDIR=$(pwd)
+cd unix
+./configure --prefix=/usr           \
+            --mandir=/usr/share/man \
+            --disable-rpath''',
+  'make',
+  '''
+sed -e "s|$SRCDIR/unix|/usr/lib|" \
+    -e "s|$SRCDIR|/usr/include|"  \
+    -i tclConfig.sh
+
+sed -e "s|$SRCDIR/unix/pkgs/tdbc1.1.13|/usr/lib/tdbc1.1.13|" \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.13/generic|/usr/include|"     \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.13/library|/usr/lib/tcl8.6|"  \
+    -e "s|$SRCDIR/pkgs/tdbc1.1.13|/usr/include|"             \
+    -i pkgs/tdbc1.1.13/tdbcConfig.sh
+
+sed -e "s|$SRCDIR/unix/pkgs/itcl4.3.7|/usr/lib/itcl4.3.7|" \
+    -e "s|$SRCDIR/pkgs/itcl4.3.7/generic|/usr/include|"    \
+    -e "s|$SRCDIR/pkgs/itcl4.3.7|/usr/include|"            \
+    -i pkgs/itcl4.3.7/itclConfig.sh
+
+unset SRCDIR''',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+chmod 644 $DESTDIR/usr/lib/libtclstub8.6.a''',
+  'chmod -v u+w $DESTDIR/usr/lib/libtcl8.6.so',
+  'make DESTDIR=$DESTDIR install-private-headers',
+  'ln -sfv tclsh8.6 $DESTDIR/usr/bin/tclsh',
+  'mv -v $DESTDIR/usr/share/man/man3/{Thread,Tcl_Thread}.3',
+  '# The optional HTML documentation (tcl8.6.18-html.tar.gz) is not installed.',
+]

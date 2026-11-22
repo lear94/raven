@@ -1,0 +1,28 @@
+name = "gmp"
+version = "6.3.0"
+description = "LFS 13.1 §8.23 - GNU multiple precision arithmetic library"
+dependencies = ["binutils"]
+source_url = "https://ftpmirror.gnu.org/gmp/gmp-6.3.0.tar.xz"
+sha256_sum = "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
+build_commands = [
+  '''
+# Book notes: on 32-bit x86 with a 64-bit capable CPU and custom CFLAGS, use
+# "ABI=32 ./configure ...". The default settings produce libraries optimized
+# for the host processor; append --host=none-linux-gnu to configure for
+# generic libraries.
+sed -i '/long long t1;/,+1s/()/(...)/' configure''',
+  '''
+./configure --prefix=/usr    \
+            --enable-cxx     \
+            --disable-static \
+            --docdir=/usr/share/doc/gmp-6.3.0''',
+  '''
+make
+make html''',
+  '# The book calls the GMP test suite (make check) critical; it is skipped here.',
+]
+install_commands = [
+  '''
+make DESTDIR=$DESTDIR install
+make DESTDIR=$DESTDIR install-html''',
+]

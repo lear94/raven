@@ -1,0 +1,24 @@
+name = "lfs-layout"
+version = "13.1"
+description = "LFS 13.1 §4.2 - Limited directory layout of $LFS"
+dependencies = []
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+]
+install_commands = [
+  '''
+mkdir -pv $DESTDIR$LFS/{etc,var} $DESTDIR$LFS/usr/{bin,lib,sbin}
+for i in bin lib sbin; do
+  ln -sv usr/$i $DESTDIR$LFS/$i
+done
+case $(uname -m) in
+  x86_64) mkdir -pv $DESTDIR$LFS/lib64 ;;
+esac''',
+  'mkdir -pv $DESTDIR$LFS/tools $DESTDIR$LFS/tools/bin',
+  '''
+mkdir -pv $DESTDIR$LFS/usr/share
+cat > $DESTDIR$LFS/usr/share/config.site << EOF
+ac_cv_func_posix_spawn_file_actions_addchdir=yes
+ac_cv_func_posix_spawn_file_actions_addfchdir=yes
+EOF''',
+]

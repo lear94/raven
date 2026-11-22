@@ -1,0 +1,13 @@
+name = "automake"
+version = "1.18.1"
+description = "LFS 13.1 §8.48 - Programs for generating Makefiles for use with Autoconf"
+dependencies = ["autoconf"]
+source_url = "https://ftpmirror.gnu.org/automake/automake-1.18.1.tar.xz"
+sha256_sum = "168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887"
+build_commands = [
+  "./configure --prefix=/usr --docdir=/usr/share/doc/automake-1.18.1",
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

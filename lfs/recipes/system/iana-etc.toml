@@ -1,0 +1,14 @@
+name = "iana-etc"
+version = "20260805.0.0"
+description = "LFS 13.1 §8.4 - IANA network services and protocols data"
+dependencies = ["man-pages"]
+source_url = "https://github.com/Mic92/iana-etc/releases/download/20260805/iana-etc-20260805.tar.gz"
+sha256_sum = "29270860664e324107537f32ea476a333ca52d71b59c74bc06ecc3b0fa9cf490"
+build_commands = [
+  'true  # nothing to build: the package only ships data files',
+]
+install_commands = [
+  '''
+install -vd $DESTDIR/etc
+cp -v services protocols $DESTDIR/etc''',
+]

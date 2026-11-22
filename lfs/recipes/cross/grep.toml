@@ -1,0 +1,17 @@
+name = "grep"
+version = "3.12"
+description = "LFS 13.1 §6.10 - Grep (temporary)"
+dependencies = ["gawk"]
+source_url = "https://ftpmirror.gnu.org/grep/grep-3.12.tar.xz"
+sha256_sum = "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr   \
+            --host=$LFS_TGT \
+            --build=$(./build-aux/config.guess)''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+]

@@ -1,0 +1,13 @@
+name = "gzip"
+version = "1.14"
+description = "LFS 13.1 §8.66 - Programs for compressing and decompressing files"
+dependencies = ["grub"]
+source_url = "https://ftpmirror.gnu.org/gzip/gzip-1.14.tar.xz"
+sha256_sum = "01a7b881bd220bfdf615f97b8718f80bdfd3f6add385b993dcf6efd14e8c0ac6"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

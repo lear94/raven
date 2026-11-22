@@ -1,0 +1,20 @@
+name = "bash"
+version = "5.3"
+description = "LFS 13.1 §6.4 - Bash (temporary)"
+dependencies = ["ncurses"]
+source_url = "https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz"
+sha256_sum = "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
+build_commands = [
+  'umask 022; export PATH=$LFS/tools/bin:/usr/bin:/bin CONFIG_SITE=$LFS/usr/share/config.site LC_ALL=POSIX',
+  '''
+./configure --prefix=/usr                      \
+            --build=$(sh support/config.guess) \
+            --host=$LFS_TGT                    \
+            --without-bash-malloc              \
+            --docdir=/usr/share/doc/bash-5.3''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR$LFS install',
+  'ln -sv bash $DESTDIR$LFS/usr/bin/sh  # book: $LFS/bin/sh (same file)',
+]

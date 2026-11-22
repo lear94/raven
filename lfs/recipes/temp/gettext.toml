@@ -1,0 +1,14 @@
+name = "gettext"
+version = "1.0"
+description = "LFS 13.1 §7.7 - Gettext (temporary: msgfmt, msgmerge, xgettext)"
+dependencies = []
+source_url = "https://ftpmirror.gnu.org/gettext/gettext-1.0.tar.xz"
+sha256_sum = "71132a3fb71e68245b8f2ac4e9e97137d3e5c02f415636eb508ae607bc01add7"
+build_commands = [
+  './configure --disable-shared',
+  'make',
+]
+install_commands = [
+  'install -dv $DESTDIR/usr/bin',
+  'cp -v gettext-tools/src/{msgfmt,msgmerge,xgettext} $DESTDIR/usr/bin',
+]

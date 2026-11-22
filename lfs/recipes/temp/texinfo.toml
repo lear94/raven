@@ -1,0 +1,11 @@
+name = "texinfo"
+version = "7.3"
+description = "LFS 13.1 §7.13 - Texinfo (temporary)"
+dependencies = ["python"]
+source_url = "https://ftpmirror.gnu.org/texinfo/texinfo-7.3.tar.xz"
+sha256_sum = "51f74eb0f51cfa9873b85264dfdd5d46e8957ec95b88f0fb762f63d9e164c72e"
+build_commands = [
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = ['make DESTDIR=$DESTDIR install']

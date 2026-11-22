@@ -1,0 +1,20 @@
+name = "kmod"
+version = "34.2"
+description = "LFS 13.1 §8.60 - Libraries and utilities for loading kernel modules"
+dependencies = ["meson"]
+source_url = "https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-34.2.tar.xz"
+sha256_sum = "5a5d5073070cc7e0c7a7a3c6ec2a0e1780850c8b47b3e3892226b93ffcb9cb54"
+build_commands = [
+  '''
+mkdir -p build
+cd       build''',
+  '''
+meson setup --prefix=/usr ..    \
+            --buildtype=release \
+            -D manpages=false''',
+  'ninja',
+]
+install_commands = [
+  '# meson honours the exported DESTDIR=/out',
+  'ninja install',
+]

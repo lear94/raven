@@ -1,0 +1,125 @@
+name = "lfs-config"
+version = "13.1"
+description = "LFS 13.1 §9 and §10.2 - System configuration (network, locale, shells, fstab)"
+dependencies = ["e2fsprogs"]
+build_commands = []
+install_commands = [
+  'cd $DESTDIR && mkdir -pv etc/systemd/network',
+  # §9.2.1 DHCP on every wired interface (the book shows one named device).
+  '''
+cat > etc/systemd/network/10-eth-dhcp.network << "EOF"
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=ipv4
+
+[DHCPv4]
+UseDomains=true
+EOF''',
+  # §9.2.2 /etc/resolv.conf is left to systemd-resolved (book default).
+  # §9.2.3 hostname (/etc/hosts is owned by lfs-filesystem).
+  'echo "lfs" > etc/hostname',
+  # §9.6 Console: the book's example font.
+  'echo FONT=Lat2-Terminus16 > etc/vconsole.conf',
+  # §9.7 Locale: C.UTF-8 is always available; change with localectl.
+  '''
+cat > etc/locale.conf << "EOF"
+LANG=C.UTF-8
+EOF''',
+  '''
+cat > etc/profile << "EOF"
+# Begin /etc/profile
+
+for i in $(locale); do
+  unset ${i%=*}
+done
+
+if [[ "$TERM" = linux ]]; then
+  export LANG=C.UTF-8
+else
+  source /etc/locale.conf
+
+  for i in $(locale); do
+    key=${i%=*}
+    if [[ -v $key ]]; then
+      export $key
+    fi
+  done
+fi
+
+# End /etc/profile
+EOF''',
+  # §9.8 inputrc.
+  '''
+cat > etc/inputrc << "EOF"
+# Begin /etc/inputrc
+# Modified by Chris Lynn <roryo@roryo.dynup.net>
+
+# Allow the command prompt to wrap to the next line
+set horizontal-scroll-mode Off
+
+# Enable 8-bit input
+set meta-flag On
+set input-meta On
+
+# Turns off 8th bit stripping
+set convert-meta Off
+
+# Keep the 8th bit for display
+set output-meta On
+
+# none, visible or audible
+set bell-style none
+
+# All of the following map the escape sequence of the value
+# contained in the 1st argument to the readline specific functions
+"\eOd": backward-word
+"\eOc": forward-word
+
+# for linux console
+"\e[1~": beginning-of-line
+"\e[4~": end-of-line
+"\e[5~": beginning-of-history
+"\e[6~": end-of-history
+"\e[3~": delete-char
+"\e[2~": quoted-insert
+
+# for xterm
+"\eOH": beginning-of-line
+"\eOF": end-of-line
+
+# for Konsole
+"\e[H": beginning-of-line
+"\e[F": end-of-line
+
+# uncomment for history search mode with up/down
+# "\e[A": history-search-backward
+# "\e[B": history-search-forward
+
+# End /etc/inputrc
+EOF''',
+  # §9.9 shells.
+  '''
+cat > etc/shells << "EOF"
+# Begin /etc/shells
+
+/bin/sh
+/bin/bash
+
+# End /etc/shells
+EOF''',
+  # §10.2 fstab: the root filesystem is found by label (lfs/scripts/make-image.sh
+  # creates it with label "lfsroot"); adapt it when installing on real disks.
+  '''
+cat > etc/fstab << "EOF"
+# Begin /etc/fstab
+
+# file system  mount-point  type     options             dump  fsck
+#                                                              order
+
+LABEL=lfsroot  /            ext4     defaults            1     1
+
+# End /etc/fstab
+EOF''',
+]

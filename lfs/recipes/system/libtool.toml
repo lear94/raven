@@ -1,0 +1,14 @@
+name = "libtool"
+version = "2.6.2"
+description = "LFS 13.1 §8.40 - GNU generic library support script"
+dependencies = ["bash"]
+source_url = "https://ftpmirror.gnu.org/libtool/libtool-2.6.2.tar.xz"
+sha256_sum = "2ef1067c16c97db930fd740cc9bc3d3ba9a583804ae5ac42cc3e8719e49e191e"
+build_commands = [
+  "./configure --prefix=/usr",
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+  "rm -fv $DESTDIR/usr/lib/libltdl.a",
+]

@@ -1,0 +1,13 @@
+name = "zstd"
+version = "1.5.7"
+description = "LFS 13.1 §8.10 - Zstandard compression"
+dependencies = ["lz4"]
+source_url = "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz"
+sha256_sum = "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+build_commands = [
+  'make prefix=/usr',
+]
+install_commands = [
+  'make prefix=/usr DESTDIR=$DESTDIR install',
+  'rm -v $DESTDIR/usr/lib/libzstd.a',
+]

@@ -10,12 +10,15 @@ use std::path::{Path, PathBuf};
 
 pub struct ScriptSandbox {
     root: PathBuf,
+    /// Extra host directories, mounted read-only at the same path.
+    extra_binds: Vec<PathBuf>,
 }
 
 impl ScriptSandbox {
-    pub fn new(root: &Path) -> Self {
+    pub fn new(root: &Path, extra_binds: &[PathBuf]) -> Self {
         Self {
             root: root.to_path_buf(),
+            extra_binds: extra_binds.to_vec(),
         }
     }
 
@@ -53,6 +56,18 @@ impl ScriptSandbox {
             ("/dev", false),
         ];
 
+        // The sandbox makes "/" a private mount so nothing it mounts can
+        // propagate to the host. That requires "/" to be a mount point, which
+        // is not the case inside a plain `chroot` into a directory.
+        if !root_is_mount_point() {
+            return Err(RavenError::Unsupported(
+                "the root directory is not a mount point (are you inside a chroot of a plain \
+                 directory?). Bind-mount the chroot directory onto itself before entering it, \
+                 e.g. 'mount --bind $LFS $LFS'"
+                    .into(),
+            ));
+        }
+
         // Everything that allocates happens here, before fork().
         let mut binds: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
         for (dir, ro) in BINDS {
@@ -62,6 +77,12 @@ impl ScriptSandbox {
                 std::fs::create_dir_all(&target)?;
                 binds.push((host.to_path_buf(), target, *ro));
             }
+        }
+        for host in &self.extra_binds {
+            let rel = host.strip_prefix("/").unwrap_or(host);
+            let target = self.root.join(rel);
+            std::fs::create_dir_all(&target)?;
+            binds.push((host.clone(), target, true));
         }
         let proc_dir = self.root.join("proc");
         std::fs::create_dir_all(&proc_dir)?;
@@ -159,9 +180,42 @@ impl ScriptSandbox {
         _env: &[(String, String)],
         _log: File,
     ) -> Result<bool, RavenError> {
-        let _ = &self.root;
+        let _ = (&self.root, &self.extra_binds);
         Err(RavenError::Unsupported(
             "sandboxed builds require Linux (namespaces + chroot)".into(),
         ))
+    }
+}
+
+/// Whether "/" (of the current root) is a mount point, per /proc/self/mountinfo.
+/// If the information is unavailable, assume it is and let mount(2) decide.
+#[cfg(target_os = "linux")]
+fn root_is_mount_point() -> bool {
+    match std::fs::read_to_string("/proc/self/mountinfo") {
+        Ok(info) => mountinfo_has_root(&info),
+        Err(_) => true,
+    }
+}
+
+/// Parses mountinfo: the 5th field of each line is the mount point.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn mountinfo_has_root(info: &str) -> bool {
+    info.lines()
+        .any(|l| l.split_whitespace().nth(4) == Some("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_root_mount_in_mountinfo() {
+        let host = "22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw\n\
+                    23 22 0:5 / /dev rw - devtmpfs udev rw\n";
+        assert!(mountinfo_has_root(host));
+        // Inside a chroot of a directory, only mounts below it are visible.
+        let chroot = "30 25 0:5 / /dev rw - devtmpfs udev rw\n\
+                      31 25 0:20 / /proc rw - proc proc rw\n";
+        assert!(!mountinfo_has_root(chroot));
     }
 }

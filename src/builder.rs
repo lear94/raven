@@ -14,7 +14,27 @@ pub struct Builder {
     work_dir: PathBuf,
     cache_dir: PathBuf,
     client: reqwest::Client,
+    /// Host variables forwarded into the (otherwise empty) build environment.
+    pass_env: Vec<(String, String)>,
+    /// Extra host directories bind-mounted read-only into the sandbox.
+    extra_binds: Vec<PathBuf>,
+    /// Absolute paths dropped from every build output before installation
+    /// (like pacman's NoExtract), e.g. shared indexes such as
+    /// `/usr/share/info/dir` that many packages would otherwise all own.
+    no_extract: Vec<PathBuf>,
 }
+
+/// Directory inside the sandbox where `extra_sources` are placed.
+pub const SANDBOX_SOURCES_DIR: &str = "/sources";
+
+/// Variables managed by Raven that `pass_env` must not override.
+const RESERVED_ENV: &[&str] = &[
+    "DESTDIR",
+    "RAVEN_PKG_NAME",
+    "RAVEN_PKG_VERSION",
+    "RAVEN_JOBS",
+    "RAVEN_SOURCES",
+];
 
 pub struct BuildOutput {
     pub pkg_dir: PathBuf,
@@ -146,7 +166,97 @@ impl Builder {
             work_dir,
             cache_dir,
             client,
+            pass_env: Vec::new(),
+            extra_binds: Vec::new(),
+            no_extract: Vec::new(),
         })
+    }
+
+    /// Forwards the given host environment variables (if set) into builds.
+    pub fn pass_env<I, S>(mut self, names: I) -> Result<Self, RavenError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for name in names {
+            let name = name.as_ref();
+            let valid = !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid || RESERVED_ENV.contains(&name) {
+                return Err(RavenError::Config(format!(
+                    "cannot pass environment variable '{}' to builds",
+                    name
+                )));
+            }
+            if let Ok(value) = std::env::var(name) {
+                self.pass_env.push((name.to_string(), value));
+            }
+        }
+        Ok(self)
+    }
+
+    /// Paths that are never installed (removed from the build output).
+    pub fn no_extract<I: IntoIterator<Item = PathBuf>>(
+        mut self,
+        paths: I,
+    ) -> Result<Self, RavenError> {
+        for p in paths {
+            let usable = p.is_absolute()
+                && p != Path::new("/")
+                && p.components().all(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::RootDir | std::path::Component::Normal(_)
+                    )
+                });
+            if !usable {
+                return Err(RavenError::Config(format!(
+                    "no-extract path '{}' must be absolute (not /)",
+                    p.display()
+                )));
+            }
+            self.no_extract.push(p);
+        }
+        Ok(self)
+    }
+
+    /// Removes the configured no-extract paths from a build output.
+    fn prune_output(&self, out_dir: &Path) -> Result<(), RavenError> {
+        for p in &self.no_extract {
+            let target = out_dir.join(p.strip_prefix("/").unwrap_or(p));
+            match fs::symlink_metadata(&target) {
+                Ok(md) if md.is_dir() => fs::remove_dir_all(&target)?,
+                Ok(_) => fs::remove_file(&target)?,
+                Err(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Makes extra host directories visible (read-only, same path) in builds.
+    pub fn extra_binds<I: IntoIterator<Item = PathBuf>>(
+        mut self,
+        dirs: I,
+    ) -> Result<Self, RavenError> {
+        for dir in dirs {
+            let usable = dir.is_absolute()
+                && dir != Path::new("/")
+                && dir.components().all(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::RootDir | std::path::Component::Normal(_)
+                    )
+                });
+            if !usable || !dir.is_dir() {
+                return Err(RavenError::Config(format!(
+                    "sandbox bind '{}' must be an existing absolute directory (not /)",
+                    dir.display()
+                )));
+            }
+            self.extra_binds.push(dir);
+        }
+        Ok(self)
     }
 
     pub async fn build(&self, recipe: &Recipe) -> Result<BuildOutput, RavenError> {
@@ -164,15 +274,32 @@ impl Builder {
         fs::create_dir_all(&src_dir)?;
         fs::create_dir_all(&out_dir)?;
 
-        // Fetch (or reuse cached) verified source.
-        let source = self.fetch_source(recipe).await?;
+        // Fetch (or reuse cached) verified sources.
+        let source = if recipe.has_source() {
+            Some(
+                self.fetch(&recipe.source_url, &recipe.sha256_sum.0, &recipe.name.0)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let sources_dir = pkg_dir.join(SANDBOX_SOURCES_DIR.trim_start_matches('/'));
+        fs::create_dir_all(&sources_dir)?;
+        for extra in &recipe.extra_sources {
+            let cached = self
+                .fetch(&extra.url, &extra.sha256_sum.0, extra.file_name())
+                .await?;
+            fs::copy(&cached, sources_dir.join(extra.file_name()))?;
+        }
 
         let spinner = create_spinner(&format!("Building {} {}...", recipe.name, recipe.version));
 
-        let (archive, dest) = (source.clone(), src_dir.clone());
-        tokio::task::spawn_blocking(move || extract_archive(&archive, &dest))
-            .await
-            .map_err(|e| RavenError::IoError(std::io::Error::other(e)))??;
+        if let Some(archive) = source {
+            let dest = src_dir.clone();
+            tokio::task::spawn_blocking(move || extract_archive(&archive, &dest))
+                .await
+                .map_err(|e| RavenError::IoError(std::io::Error::other(e)))??;
+        }
 
         let workdir = match single_top_dir(&src_dir)? {
             Some(d) => format!("/src/{}", d),
@@ -195,7 +322,7 @@ impl Builder {
         let jobs = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        let env: Vec<(String, String)> = vec![
+        let mut env: Vec<(String, String)> = vec![
             (
                 "PATH".into(),
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into(),
@@ -209,11 +336,17 @@ impl Builder {
             ("RAVEN_PKG_NAME".into(), recipe.name.0.clone()),
             ("RAVEN_PKG_VERSION".into(), recipe.version.clone()),
             ("RAVEN_JOBS".into(), jobs.to_string()),
+            ("RAVEN_SOURCES".into(), SANDBOX_SOURCES_DIR.into()),
         ];
+        // Forwarded host variables replace the defaults above (e.g. PATH).
+        for (k, v) in &self.pass_env {
+            env.retain(|(name, _)| name != k);
+            env.push((k.clone(), v.clone()));
+        }
 
         let log_path = pkg_dir.join("build.log");
         let log = File::create(&log_path)?;
-        let sandbox = ScriptSandbox::new(&pkg_dir);
+        let sandbox = ScriptSandbox::new(&pkg_dir, &self.extra_binds);
         let success = tokio::task::spawn_blocking(move || sandbox.run(&script, &env, log))
             .await
             .map_err(|e| RavenError::IoError(std::io::Error::other(e)))??;
@@ -227,8 +360,55 @@ impl Builder {
             });
         }
 
+        self.prune_output(&out_dir)?;
         log_success(&format!("Build complete: {}", recipe.name));
         Ok(BuildOutput { pkg_dir, out_dir })
+    }
+
+    /// Runs the recipe's `post_install_commands` on the live system.
+    pub async fn post_install(&self, recipe: &Recipe) -> Result<(), RavenError> {
+        if recipe.post_install_commands.is_empty() {
+            return Ok(());
+        }
+        let mut script = String::from("set -e\nset -x\n");
+        for cmd in &recipe.post_install_commands {
+            script.push_str(cmd);
+            script.push('\n');
+        }
+        let mut env: Vec<(String, String)> = vec![
+            (
+                "PATH".into(),
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into(),
+            ),
+            ("HOME".into(), "/root".into()),
+            ("LC_ALL".into(), "C".into()),
+            ("TERM".into(), "dumb".into()),
+            ("RAVEN_PKG_NAME".into(), recipe.name.0.clone()),
+            ("RAVEN_PKG_VERSION".into(), recipe.version.clone()),
+        ];
+        for (k, v) in &self.pass_env {
+            env.retain(|(name, _)| name != k);
+            env.push((k.clone(), v.clone()));
+        }
+        let output = tokio::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&script)
+            .env_clear()
+            .envs(env)
+            .current_dir("/")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await?;
+        if !output.status.success() {
+            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            let lines: Vec<&str> = text.lines().collect();
+            return Err(RavenError::PostInstallFailed {
+                package: recipe.name.0.clone(),
+                output: lines[lines.len().saturating_sub(25)..].join("\n"),
+            });
+        }
+        Ok(())
     }
 
     /// Removes the build directory after a successful installation.
@@ -236,10 +416,17 @@ impl Builder {
         let _ = fs::remove_dir_all(&output.pkg_dir);
     }
 
-    /// Returns the path of a verified copy of the recipe's source archive,
-    /// stored in the content-addressed cache.
+    /// Returns the path of a verified copy of the recipe's main source archive.
+    #[cfg(test)]
     pub async fn fetch_source(&self, recipe: &Recipe) -> Result<PathBuf, RavenError> {
-        let expected = recipe.sha256_sum.0.trim().to_lowercase();
+        self.fetch(&recipe.source_url, &recipe.sha256_sum.0, &recipe.name.0)
+            .await
+    }
+
+    /// Returns the path of a verified copy of `url`, stored in the
+    /// content-addressed cache (downloading it if needed).
+    pub async fn fetch(&self, url: &str, sha256: &str, label: &str) -> Result<PathBuf, RavenError> {
+        let expected = sha256.trim().to_lowercase();
         fs::create_dir_all(&self.cache_dir)?;
         let cached = self.cache_dir.join(&expected);
 
@@ -251,20 +438,19 @@ impl Builder {
         }
 
         let part = self.cache_dir.join(format!("{}.part", expected));
-        if let Some(local) = local_source_path(&recipe.source_url) {
+        if let Some(local) = local_source_path(url) {
             fs::copy(&local, &part).map_err(|e| {
                 RavenError::Download(format!("cannot read {}: {}", local.display(), e))
             })?;
         } else {
-            self.download_with_retry(&recipe.source_url, &part, &recipe.name.0)
-                .await?;
+            self.download_with_retry(url, &part, label).await?;
         }
 
         let actual = hash_file(&part)?;
         if actual != expected {
             let _ = fs::remove_file(&part);
             return Err(RavenError::HashMismatch {
-                file: recipe.source_url.clone(),
+                file: url.to_string(),
                 expected,
                 actual,
             });
@@ -407,6 +593,79 @@ mod tests {
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
     }
 
+    #[tokio::test]
+    async fn post_install_runs_and_reports_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let builder = Builder::new(tmp.path().join("b"), tmp.path().join("c")).unwrap();
+        let marker = tmp.path().join("marker");
+        let mut recipe = Recipe {
+            name: "x".into(),
+            version: "1.0".into(),
+            description: String::new(),
+            target_arch: None,
+            dependencies: vec![],
+            source_url: String::new(),
+            sha256_sum: HashSum::default(),
+            extra_sources: vec![],
+            build_commands: vec![],
+            install_commands: vec![],
+            post_install_commands: vec![format!(
+                "echo \"$RAVEN_PKG_NAME\" > {}",
+                shell_quote(&marker.to_string_lossy())
+            )],
+            overwrites: vec![],
+        };
+        builder.post_install(&recipe).await.unwrap();
+        assert_eq!(fs::read_to_string(&marker).unwrap().trim(), "x");
+
+        recipe.post_install_commands = vec!["echo boom".into(), "false".into(), "echo no".into()];
+        match builder.post_install(&recipe).await {
+            Err(RavenError::PostInstallFailed { output, .. }) => {
+                assert!(output.contains("boom"));
+                assert!(!output.lines().any(|l| l == "no"));
+            }
+            other => panic!("unexpected: {:?}", other.err()),
+        }
+    }
+
+    #[test]
+    fn pass_env_and_binds_are_validated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let b = || Builder::new(tmp.path().join("b"), tmp.path().join("c")).unwrap();
+        assert!(b().pass_env(["DESTDIR"]).is_err());
+        assert!(b().pass_env(["BAD-NAME"]).is_err());
+        assert!(b().pass_env(["1X"]).is_err());
+        let ok = b().pass_env(["RAVEN_TEST_SURELY_UNSET_VAR"]).unwrap();
+        assert!(ok.pass_env.is_empty());
+
+        assert!(b().extra_binds([PathBuf::from("/")]).is_err());
+        assert!(b().extra_binds([PathBuf::from("relative")]).is_err());
+        assert!(b().extra_binds([tmp.path().join("missing")]).is_err());
+        assert!(b().extra_binds([tmp.path().join("..")]).is_err());
+        let ok = b().extra_binds([tmp.path().to_path_buf()]).unwrap();
+        assert_eq!(ok.extra_binds.len(), 1);
+    }
+
+    #[test]
+    fn no_extract_prunes_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(out.join("usr/share/info")).unwrap();
+        fs::write(out.join("usr/share/info/dir"), "index").unwrap();
+        fs::write(out.join("usr/share/info/pkg.info"), "doc").unwrap();
+        let b = Builder::new(tmp.path().join("b"), tmp.path().join("c"))
+            .unwrap()
+            .no_extract([PathBuf::from("/usr/share/info/dir"), PathBuf::from("/nope")])
+            .unwrap();
+        b.prune_output(&out).unwrap();
+        assert!(!out.join("usr/share/info/dir").exists());
+        assert!(out.join("usr/share/info/pkg.info").exists());
+        assert!(Builder::new(tmp.path().join("b"), tmp.path().join("c"))
+            .unwrap()
+            .no_extract([PathBuf::from("rel/path")])
+            .is_err());
+    }
+
     #[test]
     fn target_resolution() {
         assert!(resolve_target(None).unwrap().is_none());
@@ -433,8 +692,11 @@ mod tests {
             dependencies: vec![],
             source_url: format!("file://{}", src.display()),
             sha256_sum: HashSum(sum.to_uppercase()),
+            extra_sources: vec![],
             build_commands: vec![],
             install_commands: vec![],
+            post_install_commands: vec![],
+            overwrites: vec![],
         };
 
         let cached = builder.fetch_source(&recipe).await.unwrap();

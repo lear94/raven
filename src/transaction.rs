@@ -128,6 +128,22 @@ fn sibling(dest: &Path, tag: &str) -> PathBuf {
     dest.with_file_name(format!(".{}.raven-{}.{}", name, tag, std::process::id()))
 }
 
+/// Gives `dest` the owner, group and mode of `src` (symlinks: owner only).
+/// Ownership is only changed when running as root; the mode is applied after
+/// `chown`, which would otherwise clear setuid/setgid bits.
+fn copy_ownership(src: &Path, dest: &Path) -> Result<(), RavenError> {
+    use std::os::unix::fs::MetadataExt;
+    let md = fs::symlink_metadata(src)?;
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        std::os::unix::fs::lchown(dest, Some(md.uid()), Some(md.gid()))?;
+    }
+    if !md.file_type().is_symlink() {
+        fs::set_permissions(dest, fs::Permissions::from_mode(md.mode() & 0o7777))?;
+    }
+    Ok(())
+}
+
 fn exists_no_follow(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
 }
@@ -371,7 +387,12 @@ impl TransactionManager {
                             continue;
                         }
                     }
-                    let owners = self.other_owners(&dest_s, name).await?;
+                    let owners: Vec<String> = self
+                        .other_owners(&dest_s, name)
+                        .await?
+                        .into_iter()
+                        .filter(|o| !recipe.overwrites.contains(o))
+                        .collect();
                     if !owners.is_empty() {
                         conflicts.push(format!("{} is owned by {}", dest_s, owners.join(", ")));
                     }
@@ -416,6 +437,17 @@ impl TransactionManager {
                 .execute(&mut *tx)
                 .await?;
             for e in entries.iter().filter(|e| e.kind != EntryKind::Dir) {
+                // Take over files from packages listed in `overwrites` (the
+                // preflight already refused any other owner).
+                for other in &recipe.overwrites {
+                    sqlx::query(
+                        "DELETE FROM package_files WHERE filepath = ? AND package_name = ? AND kind != 'd'",
+                    )
+                    .bind(path_str(&e.dest)?)
+                    .bind(other)
+                    .execute(&mut *tx)
+                    .await?;
+                }
                 sqlx::query(
                     "INSERT OR REPLACE INTO package_files (package_name, filepath, kind) VALUES (?, ?, ?)",
                 )
@@ -510,8 +542,7 @@ impl TransactionManager {
             if !e.dest.is_dir() {
                 fs::create_dir(&e.dest)?;
                 journal.created_dirs.push(e.dest.clone());
-                let mode = fs::metadata(&e.src)?.permissions().mode();
-                fs::set_permissions(&e.dest, fs::Permissions::from_mode(mode))?;
+                copy_ownership(&e.src, &e.dest)?;
                 owned_dirs.push(dest_s);
             } else if old_dirs.contains(dest_s.as_str()) {
                 owned_dirs.push(dest_s);
@@ -534,15 +565,17 @@ impl TransactionManager {
                         temp: temp.clone(),
                         dest: e.dest.clone(),
                     });
+                    copy_ownership(&e.src, &temp)?;
                     fs::File::open(&temp)?.sync_all()?;
                 }
                 EntryKind::Symlink => {
                     let target = fs::read_link(&e.src)?;
                     std::os::unix::fs::symlink(&target, &temp)?;
                     journal.staged.push(Staged {
-                        temp,
+                        temp: temp.clone(),
                         dest: e.dest.clone(),
                     });
+                    copy_ownership(&e.src, &temp)?;
                 }
                 EntryKind::Dir => unreachable!(),
             }
@@ -725,8 +758,11 @@ mod tests {
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             source_url: "file:///dev/null".into(),
             sha256_sum: HashSum("b".repeat(64)),
+            extra_sources: vec![],
             build_commands: vec![],
             install_commands: vec![],
+            post_install_commands: vec![],
+            overwrites: vec![],
         }
     }
 
@@ -873,6 +909,48 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn overwrites_takes_ownership_of_listed_packages_only() {
+        let env = env().await;
+        let a = artifact(
+            &env,
+            "a",
+            &[("usr/lib/libx.so", "a"), ("usr/lib/a-only", "a")],
+        );
+        env.tm
+            .install_package(&recipe("a", "1.0", &[]), &a)
+            .await
+            .unwrap();
+        let c = artifact(&env, "c", &[("usr/lib/libc-owned", "c")]);
+        env.tm
+            .install_package(&recipe("c", "1.0", &[]), &c)
+            .await
+            .unwrap();
+
+        // Listed package: its file is replaced and ownership moves.
+        let mut b = recipe("b", "1.0", &[]);
+        b.overwrites = vec!["a".into()];
+        let art = artifact(&env, "b", &[("usr/lib/libx.so", "b")]);
+        env.tm.install_package(&b, &art).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(env.root.join("usr/lib/libx.so")).unwrap(),
+            "b"
+        );
+
+        // Removing the previous owner keeps the file it no longer owns.
+        env.tm
+            .remove_package(&"a".into(), &HashSet::new())
+            .await
+            .unwrap();
+        assert!(env.root.join("usr/lib/libx.so").exists());
+        assert!(!env.root.join("usr/lib/a-only").exists());
+
+        // Packages that are not listed are still protected.
+        let art = artifact(&env, "b2", &[("usr/lib/libc-owned", "b")]);
+        let err = env.tm.install_package(&b, &art).await.unwrap_err();
+        assert!(matches!(err, RavenError::FileConflict(_)), "{err}");
     }
 
     #[tokio::test]

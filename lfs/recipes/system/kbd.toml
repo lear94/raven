@@ -1,0 +1,23 @@
+name = "kbd"
+version = "2.10.0"
+description = "LFS 13.1 §8.68 - Key-table files, console fonts, and keyboard utilities"
+dependencies = ["iproute2"]
+source_url = "https://www.kernel.org/pub/linux/utils/kbd/kbd-2.10.0.tar.xz"
+sha256_sum = "6e5ca4f8d76ee9e3a8db700b667f13e12aac9933828a64e1aaad93d26be9b479"
+extra_sources = [
+  { url = "https://www.linuxfromscratch.org/patches/lfs/13.1/kbd-2.10.0-backspace-1.patch", sha256_sum = "8be28dcb11420624a500f2ea4fe975f771174bffee50e54ec8cd295a2dec104e" },
+]
+build_commands = [
+  'patch -Np1 -i $RAVEN_SOURCES/kbd-2.10.0-backspace-1.patch',
+  '''
+sed -i '/RESIZECONS_PROGS=/s/yes/no/' configure
+sed -i 's/resizecons.8 //' docs/man/man8/Makefile.in''',
+  './configure --prefix=/usr --disable-vlock',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  '''
+install -vd $DESTDIR/usr/share/doc
+cp -R -v docs/doc -T $DESTDIR/usr/share/doc/kbd-2.10.0''',
+]

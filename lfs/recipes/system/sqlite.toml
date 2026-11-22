@@ -1,0 +1,24 @@
+name = "sqlite"
+version = "3.53.4"
+description = "LFS 13.1 §8.52 - SQL database engine library"
+dependencies = ["libffi"]
+source_url = "https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz"
+sha256_sum = "0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c"
+build_commands = [
+  '''
+# The book unpacks sqlite-doc-3530400.zip and installs it to
+# /usr/share/doc/sqlite-3.53.4; skipped (documentation only, and Raven
+# cannot extract .zip sources).
+./configure --prefix=/usr     \
+            --disable-static  \
+            --enable-fts{4,5} \
+            CPPFLAGS="-D SQLITE_ENABLE_COLUMN_METADATA=1 \
+                      -D SQLITE_ENABLE_UNLOCK_NOTIFY=1   \
+                      -D SQLITE_ENABLE_DBSTAT_VTAB=1     \
+                      -D SQLITE_SECURE_DELETE=1"
+''',
+  '''make LDFLAGS.rpath=""''',
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

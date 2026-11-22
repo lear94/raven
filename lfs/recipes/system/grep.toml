@@ -1,0 +1,14 @@
+name = "grep"
+version = "3.12"
+description = "LFS 13.1 §8.38 - Programs for searching through the contents of files"
+dependencies = ["bison"]
+source_url = "https://ftpmirror.gnu.org/grep/grep-3.12.tar.xz"
+sha256_sum = "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
+build_commands = [
+  '''sed -i "s/echo/#echo/" src/egrep.sh''',
+  "./configure --prefix=/usr",
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+]

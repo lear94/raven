@@ -1,0 +1,16 @@
+name = "groff"
+version = "1.24.1"
+description = "LFS 13.1 §8.64 - Programs for processing and formatting text and images"
+dependencies = ["findutils"]
+source_url = "https://ftpmirror.gnu.org/groff/groff-1.24.1.tar.gz"
+sha256_sum = "74e2819795b6aff431aeac983d63a9c8968eeaba2a2eba7df8ba4c7b41e7cfd8"
+build_commands = [
+  '''
+# The book uses PAGE=<paper_size>: A4 chosen here; use PAGE=letter in the US.
+# Can be overridden later by writing "A4" or "letter" to /etc/papersize.
+PAGE=A4 ./configure --prefix=/usr''',
+  'make -j1',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+]

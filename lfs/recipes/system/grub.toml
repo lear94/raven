@@ -1,0 +1,39 @@
+name = "grub"
+version = "2.14"
+description = "LFS 13.1 §8.65 - The GRand Unified Bootloader"
+dependencies = ["groff"]
+source_url = "https://ftpmirror.gnu.org/grub/grub-2.14.tar.xz"
+sha256_sum = "bc8d3c73535b8838d8c8e2654d73edc4e6ae8c8acdb45d5df5dc9a1547446d43"
+build_commands = [
+  'unset {C,CPP,CXX,LD}FLAGS',
+  "sed 's/--image-base/--nonexist-linker-option/' -i configure",
+  '''
+# 8.65.1 "for BIOS": without --target/--with-platform GRUB builds its native
+# default platform, i.e. i386-pc on x86_64 and arm64-efi on aarch64.
+./configure --prefix=/usr     \
+            --sysconfdir=/etc \
+            --disable-efiemu  \
+            --disable-werror''',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  '''
+# 8.65.2 (64-bit UEFI) only makes sense on x86_64 (--target=x86_64); it is
+# added on top of the BIOS build there, like following "all sections" in the
+# book. 8.65.3 (32-bit UEFI, "very rare") is not built.
+# grub-install is run in chapter 10, outside Raven.
+case $(uname -m) in
+  x86_64)
+    make clean
+    ./configure --prefix=/usr       \
+                --sysconfdir=/etc   \
+                --target=x86_64     \
+                --with-platform=efi \
+                --disable-efiemu    \
+                --disable-werror
+    make
+    make DESTDIR=$DESTDIR install
+  ;;
+esac''',
+]

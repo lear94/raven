@@ -1,0 +1,44 @@
+name = "shadow"
+version = "4.20.2"
+description = "LFS 13.1 §8.30 - Secure password and account management tools"
+dependencies = ["libxcrypt"]
+source_url = "https://github.com/shadow-maint/shadow/releases/download/4.20.2/shadow-4.20.2.tar.xz"
+sha256_sum = "b89f432b75ae55a2d852b446d0365484795fdf533ab97d550e325fa15594a224"
+build_commands = [
+  '''
+find man -name Makefile.in -exec sed -i 's/getspnam\.3 / /' {} \;
+find man -name Makefile.in -exec sed -i 's/passwd\.5 / /'   {} \;''',
+  '''
+sed -e 's:#ENCRYPT_METHOD SHA512:ENCRYPT_METHOD YESCRYPT:' \
+    -e 's:/var/spool/mail:/var/mail:'                      \
+    -e '/PATH=/{s@/sbin:@@;s@/bin:@@}'                     \
+    -i etc/login.defs''',
+  '''
+# The book runs "touch /usr/bin/passwd" first (/usr is read-only in the
+# sandbox). shadow 4.20.2's configure no longer probes for it: PASSWD_PROGRAM
+# is derived from exec_prefix (configure.ac), so skipping it changes nothing.
+./configure --sysconfdir=/etc   \
+            --disable-static    \
+            --with-{b,yes}crypt \
+            --without-libbsd    \
+            --disable-logind    \
+            --with-group-name-max-length=32''',
+  'make',
+]
+install_commands = [
+  '''
+make exec_prefix=/usr DESTDIR=$DESTDIR install
+make -C man DESTDIR=$DESTDIR install-man''',
+]
+# These modify the live account databases, so they run after the files are
+# committed. All of them are safe to re-run. The book's "passwd root" is
+# interactive and is left to the administrator. The optional
+# CREATE_MAIL_SPOOL=no edit of /etc/default/useradd is not applied.
+post_install_commands = [
+  'pwconv',
+  'grpconv',
+  '''
+mkdir -p /etc/default
+useradd -D --gid 999''',
+  'touch /etc/subuid /etc/subgid',
+]

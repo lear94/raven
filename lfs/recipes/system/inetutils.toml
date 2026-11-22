@@ -1,0 +1,27 @@
+name = "inetutils"
+version = "2.8"
+description = "LFS 13.1 §8.44 - Basic networking programs"
+dependencies = ["expat"]
+source_url = "https://ftpmirror.gnu.org/inetutils/inetutils-2.8.tar.gz"
+sha256_sum = "57b3cf4f77555992881e5ba2a09a63b05aa2c56342a60ed4305b5f45938390b5"
+build_commands = [
+  "sed -i 's/def HAVE_TERMCAP_TGETENT/ 1/' telnet/telnet.c",
+  '''
+./configure --prefix=/usr        \
+            --bindir=/usr/bin    \
+            --localstatedir=/var \
+            --disable-logger     \
+            --disable-whois      \
+            --disable-rcp        \
+            --disable-rexec      \
+            --disable-rlogin     \
+            --disable-rsh        \
+            --disable-servers
+''',
+  "make",
+]
+install_commands = [
+  "make DESTDIR=$DESTDIR install",
+  "install -vd $DESTDIR/usr/sbin",
+  "install -dv $DESTDIR/usr/sbin && mv -v $DESTDIR/usr/{,s}bin/ifconfig",
+]

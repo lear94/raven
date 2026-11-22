@@ -1,0 +1,14 @@
+name = "mpdecimal"
+version = "4.0.1"
+description = "LFS 13.1 §7.11 - mpdecimal (temporary)"
+dependencies = ["zlib"]
+source_url = "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz"
+sha256_sum = "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8"
+build_commands = [
+  '''
+./configure --prefix=/usr    \
+            --disable-static \
+            --docdir=/usr/share/doc/mpdecimal-4.0.1''',
+  'make',
+]
+install_commands = ['make DESTDIR=$DESTDIR install']

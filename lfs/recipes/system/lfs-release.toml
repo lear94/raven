@@ -1,0 +1,26 @@
+name = "lfs-release"
+version = "13.1"
+description = "LFS 13.1 §11.1 - Release files; installing this package builds the whole system"
+dependencies = ["linux"]
+build_commands = []
+install_commands = [
+  'install -dv $DESTDIR/etc',
+  'echo 13.1-systemd > $DESTDIR/etc/lfs-release',
+  '''
+cat > $DESTDIR/etc/lsb-release << "EOF"
+DISTRIB_ID="Linux From Scratch"
+DISTRIB_RELEASE="13.1-systemd"
+DISTRIB_CODENAME="raven"
+DISTRIB_DESCRIPTION="Linux From Scratch"
+EOF''',
+  '''
+cat > $DESTDIR/etc/os-release << "EOF"
+NAME="Linux From Scratch"
+VERSION="13.1-systemd"
+ID=lfs
+PRETTY_NAME="Linux From Scratch 13.1-systemd"
+VERSION_CODENAME="raven"
+HOME_URL="https://www.linuxfromscratch.org/lfs/"
+RELEASE_TYPE="stable"
+EOF''',
+]

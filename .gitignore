@@ -33,3 +33,10 @@ thumbs.db
 docker-context/
 # --- Raven data dir used for local testing (RAVEN_HOME) ---
 raven_home/
+
+# LFS build: downloaded sources, book copy and build output
+/lfs/sources/*
+!/lfs/sources/wget-list
+!/lfs/sources/md5sums
+/lfs/book/
+/lfs/output/

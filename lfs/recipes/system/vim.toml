@@ -1,0 +1,41 @@
+name = "vim"
+version = "9.2.1025"
+description = "LFS 13.1 §8.74 - Powerful text editor"
+dependencies = ["texinfo"]
+source_url = "https://github.com/vim/vim/archive/v9.2.1025/vim-9.2.1025.tar.gz"
+sha256_sum = "cb0dbf701f8550bb54940304fa4d8b875e078db84967e5b36a0eb7ebe8a6d0cc"
+build_commands = [
+  '''echo '#define SYS_VIMRC_FILE "/etc/vimrc"' >> src/feature.h''',
+  './configure --prefix=/usr',
+  'make',
+]
+install_commands = [
+  'make DESTDIR=$DESTDIR install',
+  '''
+ln -sv vim $DESTDIR/usr/bin/vi
+for L in  $DESTDIR/usr/share/man/{,*/}man1/vim.1; do
+    ln -sv vim.1 $(dirname $L)/vi.1
+done''',
+  '''
+install -vd $DESTDIR/usr/share/doc
+ln -sv ../vim/vim92/doc $DESTDIR/usr/share/doc/vim-9.2.1025''',
+  '''
+install -vd $DESTDIR/etc
+cat > $DESTDIR/etc/vimrc << "EOF"
+" Begin /etc/vimrc
+
+" Ensure defaults are set before customizing settings, not after
+source $VIMRUNTIME/defaults.vim
+let skip_defaults_vim=1
+
+set nocompatible
+set backspace=2
+set mouse=
+syntax on
+if (&term == "xterm") || (&term == "putty")
+  set background=dark
+endif
+
+" End /etc/vimrc
+EOF''',
+]

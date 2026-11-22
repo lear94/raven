@@ -1,51 +1,60 @@
 [package]
 name = "raven"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
+description = "Transactional, sandboxed, source-based package manager for Linux From Scratch and embedded systems"
+license = "MIT"
+repository = "https://github.com/lear94/raven"
+readme = "README.md"
 
 [dependencies]
-# Async Runtime
-tokio = { version = "1.32", features = ["full"] }
-tokio-util = { version = "0.7", features = ["full"] }
-futures = "0.3"
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "signal", "time", "io-util"] }
 
-# Database (ACID)
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+# Database (ACID). SQLite is bundled, no system library required.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
-# Error Handling
+# Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
-# Serialization & Config
+# Serialization & config
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 
-# CLI Argument Parsing
-clap = { version = "4.4", features = ["derive"] }
+# CLI
+clap = { version = "4.5", features = ["derive"] }
 
-# Networking & Download
-reqwest = { version = "0.11", features = ["stream", "rustls-tls"] }
+# Networking (pure-Rust TLS, no OpenSSL)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 
 # Cryptography
 sha2 = "0.10"
 hex = "0.4"
 
-# Versioning (Semantic Versioning)
-semver = { version = "1.0", features = ["serde"] } 
+# Versioning
+semver = "1.0"
 
-# System & Filesystem
-tempfile = "3.8"
-walkdir = "2.4"
-nix = { version = "0.27", features = ["fs", "mount", "sched", "user", "process"] }
+# Filesystem & archives
+walkdir = "2.5"
 tar = "0.4"
 flate2 = "1.0"
 xz2 = "0.1"
+bzip2 = "0.4"
+libc = "0.2"
 
-# UI & UX
-indicatif = "0.17"   # Progress bars and spinners
-console = "0.15"     # Terminal colors/control
-owo-colors = "3.5"   # Easy coloring
-fuzzy-matcher = "0.3" # Search logic
+# UI
+indicatif = "0.17"
+console = "0.15"
+fuzzy-matcher = "0.3"
 
-# Git (for syncing recipes)
-git2 = "0.18"
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.29", features = ["mount", "sched", "fs", "hostname"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

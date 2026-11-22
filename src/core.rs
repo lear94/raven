@@ -1,63 +1,221 @@
-use semver::VersionReq;
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
-use std::path::{Path, PathBuf};
+use std::fmt;
+use std::path::PathBuf;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct PackageName(pub String);
 
+impl PackageName {
+    /// Package names are used in filesystem paths and shell scripts, so they are
+    /// restricted to a safe character set: `[A-Za-z0-9][A-Za-z0-9._+-]*`.
+    pub fn is_valid(s: &str) -> bool {
+        let mut chars = s.chars();
+        match chars.next() {
+            Some(c) if c.is_ascii_alphanumeric() => {}
+            _ => return false,
+        }
+        s.len() <= 128 && chars.all(is_name_char)
+    }
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-')
+}
+
+impl fmt::Display for PackageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for PackageName {
+    fn from(s: &str) -> Self {
+        PackageName(s.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct HashSum(pub String);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Recipe {
     pub name: PackageName,
     pub version: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub target_arch: Option<String>,
+    #[serde(default)]
     pub dependencies: Vec<String>,
     pub source_url: String,
     pub sha256_sum: HashSum,
+    #[serde(default)]
     pub build_commands: Vec<String>,
+    #[serde(default)]
     pub install_commands: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DependencyReq {
     pub name: PackageName,
     pub req: VersionReq,
 }
 
 impl Recipe {
-    pub fn parse_dependencies(&self) -> Result<Vec<DependencyReq>, RavenError> {
-        let mut parsed = Vec::new();
-
-        for dep_str in &self.dependencies {
-            let parts: Vec<&str> = dep_str.splitn(2, ' ').collect();
-            let name = parts[0];
-            let req_str = if parts.len() > 1 { parts[1] } else { "*" };
-
-            let req = VersionReq::parse(req_str).map_err(|e| {
-                RavenError::DependencyError(format!("Invalid requirement for {}: {}", name, e))
-            })?;
-
-            parsed.push(DependencyReq {
-                name: PackageName(name.to_string()),
-                req,
-            });
-        }
-        Ok(parsed)
+    pub fn parsed_version(&self) -> Result<Version, RavenError> {
+        parse_version(&self.version)
     }
+
+    pub fn parse_dependencies(&self) -> Result<Vec<DependencyReq>, RavenError> {
+        self.dependencies
+            .iter()
+            .map(|d| {
+                parse_dependency(d).map_err(|e| {
+                    RavenError::InvalidRecipe(format!("{}: dependency '{}': {}", self.name, d, e))
+                })
+            })
+            .collect()
+    }
+
+    /// Validates every field that could otherwise cause a failure late in the
+    /// pipeline (after downloading or building).
+    pub fn validate(&self) -> Result<(), RavenError> {
+        if !PackageName::is_valid(&self.name.0) {
+            return Err(RavenError::InvalidRecipe(format!(
+                "invalid package name '{}' (allowed: letters, digits, '.', '_', '+', '-')",
+                self.name
+            )));
+        }
+        self.parsed_version()
+            .map_err(|e| RavenError::InvalidRecipe(format!("{}: {}", self.name, e)))?;
+        let sum = self.sha256_sum.0.trim();
+        if sum.len() != 64 || !sum.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(RavenError::InvalidRecipe(format!(
+                "{}: sha256_sum must be 64 hexadecimal characters",
+                self.name
+            )));
+        }
+        if self.source_url.trim().is_empty() {
+            return Err(RavenError::InvalidRecipe(format!(
+                "{}: source_url is empty",
+                self.name
+            )));
+        }
+        for dep in self.parse_dependencies()? {
+            if dep.name == self.name {
+                return Err(RavenError::InvalidRecipe(format!(
+                    "{}: package depends on itself",
+                    self.name
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Parses a version string. Strict SemVer is preferred, but common upstream
+/// formats such as `2.10` or `v1` are accepted and padded to `2.10.0` / `1.0.0`.
+pub fn parse_version(s: &str) -> Result<Version, RavenError> {
+    let s = s.trim();
+    let s = s.strip_prefix('v').unwrap_or(s);
+    if let Ok(v) = Version::parse(s) {
+        return Ok(v);
+    }
+    let (core, rest) = match s.find(['-', '+']) {
+        Some(i) => s.split_at(i),
+        None => (s, ""),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    if (1..=2).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    {
+        let mut padded = parts.join(".");
+        for _ in parts.len()..3 {
+            padded.push_str(".0");
+        }
+        padded.push_str(rest);
+        if let Ok(v) = Version::parse(&padded) {
+            return Ok(v);
+        }
+    }
+    Err(RavenError::Version(format!(
+        "'{}' is not a valid version (expected MAJOR.MINOR.PATCH)",
+        s
+    )))
+}
+
+/// Parses a dependency spec: `name`, `name >= 1.0.0`, `name>=1.0`, `name >=1.0, <2.0`.
+pub fn parse_dependency(spec: &str) -> Result<DependencyReq, RavenError> {
+    let spec = spec.trim();
+    let end = spec.find(|c: char| !is_name_char(c)).unwrap_or(spec.len());
+    let (name, rest) = spec.split_at(end);
+    if !PackageName::is_valid(name) {
+        return Err(RavenError::Version(format!(
+            "invalid package name in dependency '{}'",
+            spec
+        )));
+    }
+    let rest = rest.trim();
+    let req_str = if rest.is_empty() { "*" } else { rest };
+    let req = VersionReq::parse(req_str)
+        .map_err(|e| RavenError::Version(format!("invalid requirement '{}': {}", req_str, e)))?;
+    Ok(DependencyReq {
+        name: PackageName(name.to_string()),
+        req,
+    })
 }
 
 #[derive(Error, Debug)]
 pub enum RavenError {
-    #[error("Checksum verification failed (Files may be corrupted or tampered)")]
-    HashMismatch,
+    #[error("Checksum verification failed for {file}: expected {expected}, got {actual} (file may be corrupted or tampered)")]
+    HashMismatch {
+        file: String,
+        expected: String,
+        actual: String,
+    },
 
     #[error("Dependency resolution failed: {0}")]
     DependencyError(String),
+
+    #[error("Package '{0}' is not installed")]
+    NotInstalled(String),
+
+    #[error("File conflict: {0}")]
+    FileConflict(String),
+
+    #[error("Build of '{package}' failed. Full log: {}\n--- last lines of build log ---\n{tail}", log.display())]
+    BuildFailed {
+        package: String,
+        log: PathBuf,
+        tail: String,
+    },
+
+    #[error("Invalid recipe: {0}")]
+    InvalidRecipe(String),
+
+    #[error("Unsupported: {0}")]
+    Unsupported(String),
+
+    #[error("Download failed: {0}")]
+    Download(String),
+
+    #[error("Git error: {0}")]
+    Git(String),
+
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Version error: {0}")]
+    Version(String),
+
+    #[error("Operation interrupted by user")]
+    Interrupted,
 
     #[error("File system error: {0}")]
     IoError(#[from] std::io::Error),
@@ -65,203 +223,81 @@ pub enum RavenError {
     #[error("Database failure: {0}")]
     DbError(#[from] sqlx::Error),
 
-    #[error("Network connection failed")]
+    #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
-
-    #[error("Git repository error: {0}")]
-    GitError(#[from] git2::Error),
 
     #[error("Recipe parsing error: {0}")]
     ParseError(#[from] toml::de::Error),
-
-    #[error("Version Error: {0}")]
-    VersionError(#[from] semver::Error),
 }
 
-pub struct TransactionManager {
-    pub db: SqlitePool,
-    pub staging_root: PathBuf,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl TransactionManager {
-    pub async fn new(db_url: &str, staging_root: PathBuf) -> Result<Self, RavenError> {
-        let db = SqlitePool::connect(db_url).await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS packages (
-                name TEXT PRIMARY KEY,
-                version TEXT NOT NULL,
-                hash TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS package_files (
-                package_name TEXT NOT NULL,
-                filepath TEXT NOT NULL,
-                PRIMARY KEY (package_name, filepath)
-            );
-            CREATE TABLE IF NOT EXISTS dependencies (
-                package TEXT NOT NULL,
-                depends_on TEXT NOT NULL,
-                PRIMARY KEY (package, depends_on)
-            );",
-        )
-        .execute(&db)
-        .await?;
-
-        if !staging_root.exists() {
-            tokio::fs::create_dir_all(&staging_root).await?;
+    fn recipe(name: &str, version: &str, deps: &[&str]) -> Recipe {
+        Recipe {
+            name: name.into(),
+            version: version.into(),
+            description: String::new(),
+            target_arch: None,
+            dependencies: deps.iter().map(|s| s.to_string()).collect(),
+            source_url: "https://example.com/x.tar.gz".into(),
+            sha256_sum: HashSum("a".repeat(64)),
+            build_commands: vec![],
+            install_commands: vec![],
         }
-
-        Ok(Self { db, staging_root })
     }
 
-    // NEW: Retrieve installed packages for upgrade checks
-    pub async fn list_installed(&self) -> Result<Vec<(PackageName, String)>, RavenError> {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, version FROM packages")
-            .fetch_all(&self.db)
-            .await?;
-
-        let packages = rows.into_iter().map(|(n, v)| (PackageName(n), v)).collect();
-
-        Ok(packages)
+    #[test]
+    fn version_parsing_is_lenient() {
+        assert_eq!(parse_version("1.2.3").unwrap(), Version::new(1, 2, 3));
+        assert_eq!(parse_version("2.10").unwrap(), Version::new(2, 10, 0));
+        assert_eq!(parse_version("v3").unwrap(), Version::new(3, 0, 0));
+        assert_eq!(parse_version(" 1.0-rc1 ").unwrap().pre.as_str(), "rc1");
+        assert!(parse_version("abc").is_err());
+        assert!(parse_version("1..2").is_err());
+        assert!(parse_version("").is_err());
     }
 
-    pub async fn install_package(
-        &self,
-        recipe: &Recipe,
-        artifact_path: &Path,
-    ) -> Result<(), RavenError> {
-        let mut tx = self.db.begin().await?;
+    #[test]
+    fn dependency_parsing() {
+        let d = parse_dependency("openssl >= 3.0.0").unwrap();
+        assert_eq!(d.name.0, "openssl");
+        assert!(d.req.matches(&Version::new(3, 1, 0)));
+        assert!(!d.req.matches(&Version::new(2, 9, 0)));
 
-        let pkg_stage = self
-            .staging_root
-            .join(format!("{}_{}", recipe.name.0, recipe.version));
-        if pkg_stage.exists() {
-            tokio::fs::remove_dir_all(&pkg_stage).await?;
-        }
-        tokio::fs::create_dir_all(&pkg_stage).await?;
+        let d = parse_dependency("libfoo>=1.0, <2.0").unwrap();
+        assert_eq!(d.name.0, "libfoo");
+        assert!(d.req.matches(&Version::new(1, 5, 0)));
+        assert!(!d.req.matches(&Version::new(2, 0, 0)));
 
-        let status = std::process::Command::new("cp")
-            .arg("-a")
-            .arg(format!("{}/.", artifact_path.display()))
-            .arg(format!("{}/", pkg_stage.display()))
-            .status()?;
+        let d = parse_dependency("zlib").unwrap();
+        assert!(d.req.matches(&Version::new(0, 0, 1)));
 
-        if !status.success() {
-            return Err(RavenError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to copy artifacts to staging",
-            )));
-        }
-
-        for entry in walkdir::WalkDir::new(&pkg_stage)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file() {
-                let src = entry.path();
-                let relative = src.strip_prefix(&pkg_stage).unwrap();
-                let dest = Path::new("/").join(relative);
-
-                if let Some(parent) = dest.parent() {
-                    if !parent.exists() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-                }
-
-                if dest.exists() {
-                    let _ = tokio::fs::remove_file(&dest).await;
-                }
-
-                match tokio::fs::rename(&src, &dest).await {
-                    Ok(_) => {}
-                    Err(_) => {
-                        tokio::fs::copy(&src, &dest).await?;
-                        let _ = tokio::fs::remove_file(&src).await;
-                    }
-                }
-
-                sqlx::query(
-                    "INSERT OR REPLACE INTO package_files (package_name, filepath) VALUES (?, ?)",
-                )
-                .bind(&recipe.name.0)
-                .bind(dest.to_string_lossy().to_string())
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-
-        for dep in &recipe.dependencies {
-            let parts: Vec<&str> = dep.split_whitespace().collect();
-            let dep_name = parts[0];
-            sqlx::query("INSERT OR IGNORE INTO dependencies (package, depends_on) VALUES (?, ?)")
-                .bind(&recipe.name.0)
-                .bind(dep_name)
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        sqlx::query("INSERT OR REPLACE INTO packages (name, version, hash) VALUES (?, ?, ?)")
-            .bind(&recipe.name.0)
-            .bind(&recipe.version)
-            .bind(&recipe.sha256_sum.0)
-            .execute(&mut *tx)
-            .await?;
-
-        tx.commit().await?;
-
-        if pkg_stage.exists() {
-            let _ = tokio::fs::remove_dir_all(pkg_stage).await;
-        }
-
-        Ok(())
+        assert!(parse_dependency("").is_err());
+        assert!(parse_dependency(">= 1.0").is_err());
+        assert!(parse_dependency("foo >= banana").is_err());
     }
 
-    pub async fn remove_package(&self, pkg_name: &PackageName) -> Result<(), RavenError> {
-        let mut tx = self.db.begin().await?;
+    #[test]
+    fn name_validation() {
+        assert!(PackageName::is_valid("gcc"));
+        assert!(PackageName::is_valid("libstdc++"));
+        assert!(PackageName::is_valid("python3.12"));
+        assert!(!PackageName::is_valid("../etc"));
+        assert!(!PackageName::is_valid("-rf"));
+        assert!(!PackageName::is_valid("a b"));
+        assert!(!PackageName::is_valid(""));
+    }
 
-        let deps: Vec<(String,)> =
-            sqlx::query_as("SELECT package FROM dependencies WHERE depends_on = ?")
-                .bind(&pkg_name.0)
-                .fetch_all(&mut *tx)
-                .await?;
-
-        if !deps.is_empty() {
-            return Err(RavenError::DependencyError(format!(
-                "Cannot remove '{}', it is required by: {:?}",
-                pkg_name.0, deps
-            )));
-        }
-
-        let files: Vec<(String,)> =
-            sqlx::query_as("SELECT filepath FROM package_files WHERE package_name = ?")
-                .bind(&pkg_name.0)
-                .fetch_all(&mut *tx)
-                .await?;
-
-        for (f,) in files {
-            let path = Path::new(&f);
-            if path.exists() {
-                let _ = tokio::fs::remove_file(path).await;
-            }
-            if let Some(parent) = path.parent() {
-                let _ = tokio::fs::remove_dir(parent).await;
-            }
-        }
-
-        sqlx::query("DELETE FROM package_files WHERE package_name = ?")
-            .bind(&pkg_name.0)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM dependencies WHERE package = ?")
-            .bind(&pkg_name.0)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM packages WHERE name = ?")
-            .bind(&pkg_name.0)
-            .execute(&mut *tx)
-            .await?;
-
-        tx.commit().await?;
-        Ok(())
+    #[test]
+    fn recipe_validation() {
+        assert!(recipe("ok", "1.0", &["dep >= 1"]).validate().is_ok());
+        assert!(recipe("bad/name", "1.0", &[]).validate().is_err());
+        assert!(recipe("ok", "x.y", &[]).validate().is_err());
+        assert!(recipe("ok", "1.0", &["ok"]).validate().is_err());
+        let mut r = recipe("ok", "1.0", &[]);
+        r.sha256_sum = HashSum("123".into());
+        assert!(r.validate().is_err());
     }
 }

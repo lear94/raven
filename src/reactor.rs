@@ -1,14 +1,145 @@
 use crate::builder::Builder;
-use crate::core::TransactionManager;
-use crate::core::{PackageName, RavenError, Recipe};
-use crate::ui::{create_spinner, log_success};
-use semver::Version;
+use crate::core::{parse_version, PackageName, RavenError, Recipe};
+use crate::signals::CriticalSection;
+use crate::transaction::{InstalledDependency, TransactionManager};
+use crate::ui::{log_info, log_success, log_warn};
+use console::style;
+use semver::{Version, VersionReq};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub struct Reactor {
     tm: Arc<TransactionManager>,
     builder: Arc<Builder>,
+}
+
+/// Resolves the build order for `targets`.
+///
+/// * Targets are always (re)built.
+/// * A dependency already installed at a version satisfying the requirement is
+///   left untouched; otherwise it is built from its recipe, provided the recipe
+///   version satisfies the requirement.
+/// * Packages are returned in dependency order (dependencies first).
+pub fn resolve(
+    targets: &[PackageName],
+    recipes: &HashMap<PackageName, Recipe>,
+    installed: &HashMap<PackageName, Version>,
+) -> Result<Vec<PackageName>, RavenError> {
+    struct Ctx<'a> {
+        recipes: &'a HashMap<PackageName, Recipe>,
+        installed: &'a HashMap<PackageName, Version>,
+        targets: HashSet<&'a PackageName>,
+        visited: HashSet<PackageName>,
+        stack: Vec<PackageName>,
+        order: Vec<PackageName>,
+    }
+
+    fn visit(ctx: &mut Ctx, node: &PackageName) -> Result<(), RavenError> {
+        if ctx.visited.contains(node) {
+            return Ok(());
+        }
+        if let Some(pos) = ctx.stack.iter().position(|n| n == node) {
+            let mut cycle: Vec<String> = ctx.stack[pos..].iter().map(|n| n.0.clone()).collect();
+            cycle.push(node.0.clone());
+            return Err(RavenError::DependencyError(format!(
+                "Circular dependency detected: {}",
+                cycle.join(" -> ")
+            )));
+        }
+
+        let recipe = ctx
+            .recipes
+            .get(node)
+            .ok_or_else(|| match ctx.stack.last() {
+                Some(parent) => RavenError::DependencyError(format!(
+                    "Missing dependency: '{}' (required by '{}') has no recipe",
+                    node, parent
+                )),
+                None => RavenError::DependencyError(format!("Package not found: {}", node)),
+            })?;
+
+        ctx.stack.push(node.clone());
+        for dep in recipe.parse_dependencies()? {
+            let installed_ok = ctx
+                .installed
+                .get(&dep.name)
+                .is_some_and(|v| dep.req.matches(v));
+            if installed_ok && !ctx.targets.contains(&dep.name) {
+                continue;
+            }
+
+            match ctx.recipes.get(&dep.name) {
+                Some(candidate) => {
+                    let cv = candidate.parsed_version()?;
+                    if !dep.req.matches(&cv) {
+                        let installed_note = ctx
+                            .installed
+                            .get(&dep.name)
+                            .map(|v| format!(", installed '{}'", v))
+                            .unwrap_or_default();
+                        return Err(RavenError::DependencyError(format!(
+                            "Version mismatch for '{}': '{}' requires '{}', but the recipe provides '{}'{}",
+                            dep.name, node, dep.req, candidate.version, installed_note
+                        )));
+                    }
+                }
+                None if ctx.installed.contains_key(&dep.name) => {
+                    return Err(RavenError::DependencyError(format!(
+                        "Version mismatch for '{}': '{}' requires '{}', installed '{}' and no recipe available",
+                        dep.name, node, dep.req, ctx.installed[&dep.name]
+                    )));
+                }
+                None => {}
+            }
+            visit(ctx, &dep.name)?;
+        }
+        ctx.stack.pop();
+
+        ctx.visited.insert(node.clone());
+        ctx.order.push(node.clone());
+        Ok(())
+    }
+
+    let mut ctx = Ctx {
+        recipes,
+        installed,
+        targets: targets.iter().collect(),
+        visited: HashSet::new(),
+        stack: Vec::new(),
+        order: Vec::new(),
+    };
+    for t in targets {
+        visit(&mut ctx, t)?;
+    }
+    Ok(ctx.order)
+}
+
+/// Ensures that installing the planned versions doesn't break installed
+/// packages that depend on them (and are not themselves being rebuilt).
+pub fn check_reverse_dependencies(
+    plan: &[PackageName],
+    recipes: &HashMap<PackageName, Recipe>,
+    installed_deps: &[InstalledDependency],
+) -> Result<(), RavenError> {
+    let in_plan: HashSet<&PackageName> = plan.iter().collect();
+    for pkg in plan {
+        let new_version = recipes[pkg].parsed_version()?;
+        for d in installed_deps
+            .iter()
+            .filter(|d| &d.depends_on == pkg && !in_plan.contains(&d.package))
+        {
+            let Ok(req) = VersionReq::parse(&d.req) else {
+                continue;
+            };
+            if !req.matches(&new_version) {
+                return Err(RavenError::DependencyError(format!(
+                    "Version mismatch: installing '{}' {} would break installed package '{}' (requires '{} {}')",
+                    pkg, new_version, d.package, pkg, d.req
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Reactor {
@@ -21,96 +152,196 @@ impl Reactor {
         targets: Vec<PackageName>,
         recipes: HashMap<PackageName, Recipe>,
     ) -> Result<(), RavenError> {
-        // 1. Resolve DAG (Directed Acyclic Graph)
-        let mut build_order = Vec::new();
-        let mut visited = HashSet::new();
-        let mut temp_visited = HashSet::new();
-
-        for target in targets {
-            self.visit(
-                &target,
-                &recipes,
-                &mut visited,
-                &mut temp_visited,
-                &mut build_order,
-            )?;
+        let installed_list = self.tm.list_installed().await?;
+        let mut installed = HashMap::new();
+        for p in &installed_list {
+            match parse_version(&p.version) {
+                Ok(v) => {
+                    installed.insert(p.name.clone(), v);
+                }
+                Err(_) => log_warn(&format!(
+                    "Installed package '{}' has unparseable version '{}'; it will be rebuilt if needed",
+                    p.name, p.version
+                )),
+            }
         }
 
-        // 2. Execute Build & Install
-        for pkg_name in build_order {
-            let recipe = recipes.get(&pkg_name).unwrap();
+        let mut unique_targets = Vec::new();
+        for t in targets {
+            if !unique_targets.contains(&t) {
+                unique_targets.push(t);
+            }
+        }
 
-            let spinner = create_spinner(&format!("Processing {}...", pkg_name.0));
+        let plan = resolve(&unique_targets, &recipes, &installed)?;
+        check_reverse_dependencies(&plan, &recipes, &self.tm.all_dependencies().await?)?;
 
-            // Compile
-            let artifact = self.builder.build(recipe).await?;
+        println!("{}", style("Transaction plan:").bold());
+        for name in &plan {
+            let r = &recipes[name];
+            let action = match installed_list.iter().find(|p| &p.name == name) {
+                Some(p) if p.version == r.version => format!("reinstall {}", r.version),
+                Some(p) => format!("{} -> {}", p.version, r.version),
+                None => format!("install {}", r.version),
+            };
+            println!("   {} {}", style(&name.0).cyan(), action);
+        }
+        println!();
 
-            // ACID Install
-            self.tm.install_package(recipe, &artifact).await?;
+        let total = plan.len();
+        let mut done: Vec<String> = Vec::new();
+        for (i, name) in plan.iter().enumerate() {
+            let recipe = &recipes[name];
+            log_info(&format!(
+                "[{}/{}] {} {}",
+                i + 1,
+                total,
+                name,
+                recipe.version
+            ));
 
-            spinner.finish_and_clear();
-            log_success(&format!("Installed {} v{}", pkg_name.0, recipe.version));
+            let result = async {
+                let output = self.builder.build(recipe).await?;
+                {
+                    let _guard = CriticalSection::enter();
+                    self.tm.install_package(recipe, &output.out_dir).await?;
+                }
+                self.builder.cleanup(&output);
+                crate::signals::check_interrupted()
+            }
+            .await;
+
+            if let Err(e) = result {
+                if !done.is_empty() {
+                    log_warn(&format!(
+                        "Packages installed before the failure remain installed: {}",
+                        done.join(", ")
+                    ));
+                }
+                return Err(e);
+            }
+
+            log_success(&format!("Installed {} v{}", name, recipe.version));
+            done.push(name.0.clone());
         }
 
         Ok(())
     }
+}
 
-    fn visit(
-        &self,
-        node: &PackageName,
-        recipes: &HashMap<PackageName, Recipe>,
-        visited: &mut HashSet<PackageName>,
-        temp_visited: &mut HashSet<PackageName>,
-        order: &mut Vec<PackageName>,
-    ) -> Result<(), RavenError> {
-        // Cycle detection
-        if temp_visited.contains(node) {
-            return Err(RavenError::DependencyError(format!(
-                "Circular dependency detected involving {}",
-                node.0
-            )));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::HashSum;
+
+    fn recipe(name: &str, version: &str, deps: &[&str]) -> Recipe {
+        Recipe {
+            name: name.into(),
+            version: version.into(),
+            description: String::new(),
+            target_arch: None,
+            dependencies: deps.iter().map(|s| s.to_string()).collect(),
+            source_url: "https://example.com/x.tar.gz".into(),
+            sha256_sum: HashSum("a".repeat(64)),
+            build_commands: vec![],
+            install_commands: vec![],
         }
-        if visited.contains(node) {
-            return Ok(());
-        }
+    }
 
-        temp_visited.insert(node.clone());
+    fn repo(rs: Vec<Recipe>) -> HashMap<PackageName, Recipe> {
+        rs.into_iter().map(|r| (r.name.clone(), r)).collect()
+    }
 
-        let recipe = recipes
-            .get(node)
-            .ok_or_else(|| RavenError::DependencyError(format!("Package not found: {}", node.0)))?;
+    fn names(v: &[PackageName]) -> Vec<&str> {
+        v.iter().map(|n| n.0.as_str()).collect()
+    }
 
-        // --- SEMVER VALIDATION ---
-        let deps = recipe.parse_dependencies()?;
+    #[test]
+    fn resolves_dependencies_first() {
+        let r = repo(vec![
+            recipe("app", "1.0.0", &["lib >= 1.0.0", "util"]),
+            recipe("lib", "1.2.0", &["util"]),
+            recipe("util", "0.1.0", &[]),
+        ]);
+        let plan = resolve(&["app".into()], &r, &HashMap::new()).unwrap();
+        assert_eq!(names(&plan), vec!["util", "lib", "app"]);
+    }
 
-        for dep_req in deps {
-            let candidate = recipes.get(&dep_req.name).ok_or_else(|| {
-                RavenError::DependencyError(format!("Missing dependency: {}", dep_req.name.0))
-            })?;
+    #[test]
+    fn detects_cycles() {
+        let r = repo(vec![
+            recipe("a", "1.0.0", &["b"]),
+            recipe("b", "1.0.0", &["a"]),
+        ]);
+        let err = resolve(&["a".into()], &r, &HashMap::new()).unwrap_err();
+        assert!(err.to_string().contains("a -> b -> a"), "{err}");
+    }
 
-            let candidate_version = Version::parse(&candidate.version).map_err(|e| {
-                RavenError::DependencyError(format!(
-                    "Package {} has invalid semver: {}",
-                    candidate.name.0, e
-                ))
-            })?;
+    #[test]
+    fn reports_missing_packages() {
+        let r = repo(vec![recipe("a", "1.0.0", &["ghost"])]);
+        assert!(resolve(&["a".into()], &r, &HashMap::new())
+            .unwrap_err()
+            .to_string()
+            .contains("Missing dependency"));
+        assert!(resolve(&["nope".into()], &r, &HashMap::new())
+            .unwrap_err()
+            .to_string()
+            .contains("Package not found"));
+    }
 
-            // Mathematical check (e.g., 1.5.0 >= 1.0.0)
-            if !dep_req.req.matches(&candidate_version) {
-                return Err(RavenError::DependencyError(format!(
-                    "Version mismatch for '{}': required '{}', but found '{}'",
-                    dep_req.name.0, dep_req.req, candidate.version
-                )));
-            }
+    #[test]
+    fn rejects_version_mismatch() {
+        let r = repo(vec![
+            recipe("app", "1.0.0", &["lib >= 2.0.0"]),
+            recipe("lib", "1.0.0", &[]),
+        ]);
+        let installed = HashMap::from([("lib".into(), Version::new(1, 0, 0))]);
+        let err = resolve(&["app".into()], &r, &installed).unwrap_err();
+        assert!(err.to_string().contains("Version mismatch"), "{err}");
+    }
 
-            self.visit(&dep_req.name, recipes, visited, temp_visited, order)?;
-        }
-        // -------------------------
+    #[test]
+    fn skips_satisfied_installed_dependencies() {
+        let r = repo(vec![
+            recipe("app", "1.0.0", &["lib >= 1.0.0"]),
+            recipe("lib", "1.5.0", &[]),
+        ]);
+        let installed = HashMap::from([("lib".into(), Version::new(1, 0, 0))]);
+        let plan = resolve(&["app".into()], &r, &installed).unwrap();
+        assert_eq!(names(&plan), vec!["app"]);
+        // Explicit targets are always rebuilt.
+        let plan = resolve(&["lib".into(), "app".into()], &r, &installed).unwrap();
+        assert_eq!(names(&plan), vec!["lib", "app"]);
+    }
 
-        temp_visited.remove(node);
-        visited.insert(node.clone());
-        order.push(node.clone());
+    #[test]
+    fn upgrades_unsatisfied_installed_dependencies() {
+        let r = repo(vec![
+            recipe("app", "1.0.0", &["lib >= 2.0.0"]),
+            recipe("lib", "2.1.0", &[]),
+        ]);
+        let installed = HashMap::from([("lib".into(), Version::new(1, 0, 0))]);
+        let plan = resolve(&["app".into()], &r, &installed).unwrap();
+        assert_eq!(names(&plan), vec!["lib", "app"]);
+    }
 
-        Ok(())
+    #[test]
+    fn reverse_dependency_check() {
+        let r = repo(vec![recipe("lib", "2.0.0", &[])]);
+        let deps = vec![InstalledDependency {
+            package: "app".into(),
+            depends_on: "lib".into(),
+            req: "<2.0.0".into(),
+        }];
+        let err = check_reverse_dependencies(&["lib".into()], &r, &deps).unwrap_err();
+        assert!(err.to_string().contains("would break"), "{err}");
+
+        // Fine if the dependent is rebuilt in the same transaction.
+        let r = repo(vec![
+            recipe("lib", "2.0.0", &[]),
+            recipe("app", "1.0.0", &["lib"]),
+        ]);
+        check_reverse_dependencies(&["lib".into(), "app".into()], &r, &deps).unwrap();
     }
 }

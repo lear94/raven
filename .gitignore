@@ -31,3 +31,5 @@ thumbs.db
 
 # --- Docker ---
 docker-context/
+# --- Raven data dir used for local testing (RAVEN_HOME) ---
+raven_home/

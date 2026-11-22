@@ -1,144 +1,125 @@
 # RAVEN Package Manager
-**A High-Performance, Transactional Package Manager for Mission-Critical Systems.**
+**A transactional, sandboxed, source-based package manager for mission-critical systems.**
 
+## Overview
 
+**Raven** is a source-based package manager written in **Rust**, designed for Linux From Scratch (LFS) environments and embedded systems where reliability is non-negotiable.
 
-## 🦅 Overview
+Raven builds packages from source inside isolated **Linux namespaces** and records every change in **SQLite**, so a failed build, a file conflict or an interrupted installation never leaves the system half-modified.
 
-**Raven** is a modern, source-based package manager written in **Rust**, designed for Linux From Scratch (LFS) environments and embedded systems where reliability is non-negotiable.
+## Key Features
 
-Unlike traditional package managers, Raven builds packages from source inside strictly isolated **Linux Namespaces (Sandboxes)** and uses **SQLite** to enforce **ACID properties** on every installation. It ensures that your system remains consistent, even in the event of failure (power loss, crash, etc.).
+- **Sandboxed builds**: each build runs in a private mount/UTS/IPC namespace inside a `chroot`. Host tool directories (`/usr`, `/bin`, `/lib`, `/etc`, ...) are bind-mounted **read-only**, the environment is cleared, and the build can only write to `/src`, `/tmp` and `/out` (`DESTDIR`).
+- **Transactional installs**: files are staged next to their destination and swapped in with atomic `rename`s; the database is committed last. Any error rolls back every file that was replaced. Ctrl-C during this step is deferred until the transaction is complete.
+- **File conflict detection**: a package can't overwrite files owned by another package.
+- **Clean upgrades**: files that the new version no longer ships are removed; directories created by a package are removed with it.
+- **Semantic versioning**: requirements such as `openssl >= 3.0.0` or `zlib >=1.2, <2.0`. Upstream versions like `2.10` are accepted (as `2.10.0`).
+- **Smart resolution**: dependency graph with cycle detection; already-installed dependencies that satisfy the requirement are not rebuilt; upgrades that would break an installed dependent are refused.
+- **Dependency guards**: a package can't be removed while another installed package depends on it.
+- **Verified, cached downloads**: SHA-256 is verified for every source; sources are cached by checksum, so rebuilds don't download again. Downloads retry with backoff. `.tar`, `.tar.gz`, `.tar.xz` and `.tar.bz2` are supported, as well as local sources (`file:///path` or `/path`).
+- **Strict builds**: build scripts run with `set -e`, so any failing command aborts the build; the tail of the build log is shown on failure.
+- **Safe concurrency**: a global lock prevents two Raven processes from modifying the system at once.
+- **Robust recipe loading**: an invalid recipe is reported and skipped instead of breaking the whole repository.
 
-## ✨ Key Features
+## Installation
 
--   **🛡️ Sandboxed Builds:** Compiles software inside a hermetic container using Linux Namespaces (`CLONE_NEWNS`, `unshare`) and private bind mounts. This prevents host system pollution during compilation.
-    
--   **⚛️ ACID Transactions:** Uses SQLite to track every file and state change. Installations are atomic; if a transaction fails, the database rolls back, ensuring integrity.
-    
--   **🧠 Semantic Versioning (SemVer):** Full support for complex dependency requirements (e.g., `openssl >= 3.0.0`). Raven calculates version compatibility mathematically.
-    
--   **🔄 Auto-Upgrade System:** Detects outdated packages by comparing local database versions against remote recipes and rebuilds them automatically via `raven upgrade`.
-    
--   **📦 Dependency Guards:** Implements Reverse Dependency protection. You cannot remove a library if an installed application still relies on it.
-    
--   **⚙️ Dynamic Configuration:** Easily switch between package repositories (e.g., GitHub, GitLab, or local mirrors) without recompiling.
-    
--   **🚀 High Performance:** Async I/O (Tokio), concurrent downloads with retries, and a reactor pattern for dependency graph resolution.
-    
--   **💅 Modern UI:** Professional CLI experience with animated progress bars, spinners, and colored output.
-    
+### Requirements
 
-## 🛠️ Installation
+- **OS:** Linux (kernel with namespace support). Building packages requires root.
+- **Tools:** `git` (for `raven update`), and whatever toolchain your recipes need (e.g. `build-essential`).
+- **Rust:** recent stable toolchain to build Raven itself. No OpenSSL or system SQLite needed (TLS is pure Rust and SQLite is bundled).
 
-### Prerequisites
+### Building from source
 
--   **OS:** Linux (Requires Kernel support for Namespaces)
-    
--   **Dependencies:** `build-essential`, `libssl-dev`, `pkg-config`, `sqlite3`
-    
--   **Rust:** Stable toolchain (1.70+)
-    
-
-### Building from Source
-
-```
-# 1. Clone the repository
+```sh
 git clone https://github.com/lear94/raven.git
 cd raven
-
-# 2. Build in release mode
 cargo build --release
-
-# 3. Install binary (optional)
-sudo cp target/release/raven /usr/local/bin/
-
+sudo install -m 755 target/release/raven /usr/local/bin/raven
 ```
 
-## 📖 Usage
+## Usage
 
-### Initialization
+Raven stores its data in `/var/lib/raven` (override with the `RAVEN_HOME` environment variable):
 
-Raven automatically creates its database at `/var/lib/raven/metadata.db` on the first run.
+| Path | Purpose |
+| --- | --- |
+| `metadata.db` | Installed packages, files and dependencies |
+| `config.toml` | Configuration |
+| `recipes/` | Recipe repository |
+| `cache/` | Verified source archives (by SHA-256) |
+| `build/` | Build roots (kept on failure for debugging, including `build.log`) |
 
 ### Configuration
 
-Set your recipe repository (Git) or use a local path:
-
-```
-raven config --set-repo "https://github.com/lear94/raven-recipes.git"
-
+```sh
+raven config --set-repo "https://github.com/lear94/raven-recipes.git"   # git repository
+raven config --set-repo local-mode                                      # manage recipes/ by hand
+raven config                                                            # show configuration
 ```
 
 ### Commands
 
-**1. Search for a package** Fuzzy search allows you to find packages even with typos.
-
-```
-raven search hello
-
-```
-
-**2. Install a package** Resolves dependencies (SemVer), downloads source, builds in sandbox, and installs transactionally.
-
-```
-sudo raven install nginx
-
+```sh
+raven search hello            # fuzzy search by name and description
+sudo raven install nginx      # resolve, download, build in sandbox, install transactionally
+sudo raven update             # sync recipes from the git repository
+sudo raven upgrade            # rebuild packages that have a newer recipe version
+sudo raven remove vim         # remove (blocked if other packages depend on it)
+raven list                    # list installed packages
 ```
 
-**3. Update & Upgrade** Sync recipes from the remote git repo and upgrade the entire system based on version comparison.
+`remove` accepts several packages and removes them in dependency order (`raven remove app libfoo`).
 
+## Writing recipes
+
+A recipe is a TOML file in the recipes directory:
+
+```toml
+name = "hello"
+version = "2.10"
+description = "GNU Hello"
+dependencies = ["libdummy >= 1.0.0"]          # optional
+source_url = "https://mirrors.kernel.org/gnu/hello/hello-2.10.tar.gz"
+sha256_sum = "31e066137a962676e89f69d1b65382de95a7ef7d914b8cb956f41ea72e0f516b"
+build_commands = ["./configure --prefix=/usr", "make -j$RAVEN_JOBS"]
+install_commands = ["make install"]
+# target_arch = "aarch64"                     # optional, for cross builds
 ```
-sudo raven update
-sudo raven upgrade
 
+Build environment:
+
+- If the archive contains a single top-level directory, commands run inside it; otherwise in `/src`.
+- `DESTDIR=/out` is exported: install everything under `/out`. Writing to host directories fails (they are read-only).
+- Variables: `RAVEN_PKG_NAME`, `RAVEN_PKG_VERSION`, `RAVEN_JOBS` (CPU count), `PATH`, `HOME=/tmp`, `LC_ALL=C`.
+- Requirement syntax follows SemVer: `>= 1.0`, `< 2`, `= 1.2.3`, `~1.2`; a bare version (`1.2.0`) means compatible (`^1.2.0`).
+- `target_arch`: omit it (or use `any`) for native builds. `aarch64` on an x86_64 host (and vice versa) exports `CC`, `CXX`, `AR` and `CROSS_COMPILE` for the matching `*-linux-gnu` cross toolchain.
+
+## Architecture
+
+1. **Reactor** (`reactor.rs`): resolves the dependency DAG, validates SemVer constraints in both directions, and drives build and install.
+2. **Builder** (`builder.rs`): downloads and verifies sources (cache, retries), extracts them and generates the build script.
+3. **Sandbox** (`sandbox.rs`): namespaces, read-only bind mounts, private `/proc`, `chroot`.
+4. **TransactionManager** (`transaction.rs`): staging, atomic swap, rollback and SQLite bookkeeping (WAL, `synchronous=FULL`, schema migrations).
+
+## Testing
+
+```sh
+cargo test          # unit tests (any Unix, no root needed)
+./run_test.sh       # full lifecycle in a privileged Docker container
 ```
 
-**4. Remove a package** Safely removes a package (blocked if other packages depend on it).
+The integration suite covers configuration, dependency chains, database integrity, SemVer conflicts, failed builds, sandbox isolation, file conflicts, upgrades and removal.
 
-```
-sudo raven remove vim
+## Contributing
 
-```
+Contributions are welcome:
 
-## 🏗️ Architecture
+1. Fork the project
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Make sure `cargo fmt --check`, `cargo clippy -- -D warnings` and `cargo test` pass
+4. Open a pull request
 
-Raven consists of four main architectural pillars:
+## License
 
-1.  **Reactor (The Brain):** Builds a Directed Acyclic Graph (DAG) of dependencies. It validates SemVer constraints (`>=`, `<`) to ensure compatibility before any build starts.
-    
-2.  **Builder (The Muscle):** Downloads sources with robust retry logic, verifies SHA256 hashes, and orchestrates the compilation process.
-    
-3.  **Sandbox**d integration test suite that simulates a full system lifecycle (Install, Remove, Upgrade, Crash recovery).
-    
-    To run the full suite:
-    
-    ```
-    ./run_test.sh
-    
-    ```
-    
-    ## 🤝 Contributing
-    
-    Contributions are welcome! Please feel free to submit a Pull Request.
-    
-    1.  Fork the Project
-        
-    2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-        
-    3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-        
-    4.  Push to the Branch (`git push origin feature/AmazingFeature`)
-        
-    5.  Open a Pull Request
-        
-    
-    ## 📄 License
-    
-    Distributed under the MIT License. See `LICENSE` for more information. **(The Shield):** Sets up a `chroot` environment with private `/proc`, `/dev`, and `/sys` mounts. It removes `CLONE_NEWPID` complexity to ensure build scripts (Makefiles) can spawn processes reliably while remaining isolated.
-    
-4.  **TransactionManager (The Memory):** Records every file path, version, and dependency in SQLite. It handles the "Staging -> Final" file move operation atomically.
-    
-
-## 🧪 Testing
-
-Raven includes a robust, Docker-base
+Distributed under the MIT License. See `LICENSE` for more information.
